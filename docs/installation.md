@@ -1,39 +1,44 @@
 # Pyserini: Detailed Installation Guide
 
-Pyserini is built on Python 3.12 (other versions might work, but YMMV).
-See [`pyproject.toml`](../pyproject.toml) for a detailed list of dependencies.
-At a high level:
+Pyserini is built on Python 3.12 (newer versions might work, but YMMV).
+See [`pyproject.toml`](../pyproject.toml) for the list of dependencies.
+Key points:
 
 + Pyserini depends on [Anserini](http://anserini.io/), which is built on Lucene.
 [PyJNIus](https://github.com/kivy/pyjnius) is used to interact with the JVM. We depend on Java 21.
 + We need [PyTorch](https://pytorch.org/), [🤗 Transformers](https://github.com/huggingface/transformers), and the [ONNX Runtime](https://onnxruntime.ai/) for "neural stuff".
-+ We need [Faiss](https://github.com/facebookresearch/faiss) for searching dense vectors. (Although we can search dense vectors with Lucene also.)
++ We need [Faiss](https://github.com/facebookresearch/faiss) for searching dense vectors. We can also search dense vectors with Lucene, so consider Faiss optional.
 
-A `pip` installation _should_ automatically pull in major dependencies without any major issues:
+We recommend that you install the following dependencies separately, _before_ installing Pyserini:
+
++ [PyTorch](https://pytorch.org/), because there are many configurations (e.g., CUDA vs. no CUDA).
+PyTorch is a declared dependency, but pre-installing it lets you choose the appropriate CPU/CUDA build.
+The [official PyTorch "Get Started" guide](https://pytorch.org/get-started/locally/) suggests using `pip`, but an alternative is to let `conda` manage the dependencies, particularly native libs. With `conda`, you can get `pytorch` from multiple channels: e.g., the [`conda-forge`](https://anaconda.org/channels/conda-forge/packages/pytorch/overview) channel or the [`main`](https://anaconda.org/channels/main/packages/pytorch/overview) channel.
+Do not install PyTorch from the [`pytorch`](https://anaconda.org/channels/pytorch/packages/pytorch/overview) channel; [official PyTorch Conda packages were discontinued after version 2.5](https://github.com/pytorch/pytorch/issues/138506).
+FWIW, Codex suggests using the `conda-forge` channel.
++ [Faiss](https://github.com/facebookresearch/faiss), because there are many variants (e.g., `faiss-cpu` vs. `faiss-gpu`).
+Install only if you need retrieval using Faiss.
+The [official Faiss install guide](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) says to use the `pytorch` channel via `-c pytorch -c conda-forge`.
+A potential gotcha: if you mix channels, you might end up with weird library conflicts.
+
+After installing the dependencies needed for your workflow:
 
 ```bash
 pip install pyserini
 ```
 
-❗ For [PyTorch](https://pytorch.org/), [🤗 Transformers](https://github.com/huggingface/transformers), and the [ONNX Runtime](https://onnxruntime.ai/): sometimes `pip` has issues pulling in the "right" versions.
-If this is the case, it might make sense to install these dependencies first (selecting the right version by hand, perhaps via `conda`).
-
-❗ [Faiss](https://github.com/facebookresearch/faiss) is _not_ included in the dependencies list because there is a proliferation of variants (`faiss-cpu`, `faiss-gpu`, etc.), so it's easier if you install the right variant yourself.
-
-Multimodal support (e.g., image search) has been pushed into an `optional` package.
-If you need it, install `'pyserini[optional]'`:
+Multimodal support (e.g., image search) is provided in the `optional` extra.
+If you need it:
 
 ```bash
 pip install 'pyserini[optional]'
+pip install git+https://github.com/openai/CLIP.git
 ```
-
-tl;dr &mdash; 🤞
 
 ## PyPI Installation Walkthrough
 
-Below is a step-by-step Pyserini installation guide based on Python 3.12.
+Below is a step-by-step Pyserini installation recipe using Python 3.12.
 We recommend using [Anaconda](https://www.anaconda.com/) and assume you have already installed it.
-The following instructions are up to date as of April 2026 and _should_ work.
 
 ### Mac
 
@@ -43,21 +48,50 @@ If you're on a Mac with an M-series (i.e., ARM) processor:
 conda create -n pyserini python=3.12 -y
 conda activate pyserini
 
-# Inside the new environment...
 conda install -c anaconda wget -y
 conda install -c conda-forge openjdk=21 maven -y
+conda install -c conda-forge pytorch -y
+conda install -c conda-forge faiss-cpu -y
 
-# from https://pytorch.org/get-started/locally/
-pip install torch torchvision torchaudio
+pip install 'pyserini[optional]'
 
-# If you want the optional dependencies, otherwise skip
-conda install -c pytorch faiss-cpu -y
+# Needed for multimodal retrieval
+pip install git+https://github.com/openai/CLIP.git
+```
 
-# Good idea to always explicitly specify the latest version, found here: https://pypi.org/project/pyserini/
-pip install pyserini==latest
-# If you want the optional dependencies, otherwise skip; the temperamental packages are already installed at this point
-# so should be smooth...
-pip install 'pyserini==latest'
+As of November 2026, the above recipe has been verified to work on a circa 2025 MacBook Air with an M4 processor.
+The above recipe pulled in the following dependency versions:
+
+```bash
+% pip list | egrep '(transformers|torch|faiss)\s'
+faiss                     1.14.3
+torch                     2.14.1
+transformers              5.23.0
+```
+
+In contrast to the recipe above, the [official Faiss install guide](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) suggests the following:
+
+```bash
+conda install -c pytorch -c conda-forge faiss-cpu=1.16.0
+```
+
+But it does not appear that 1.16.0 is available for macOS ARM64 in the `pytorch` channel:
+
+```bash
+conda search --override-channels -c pytorch faiss-cpu
+```
+
+If we specify 1.15.0:
+
+```bash
+conda install -c pytorch -c conda-forge faiss-cpu=1.15.0 -y
+```
+
+Installation will proceed without error, but we end up with a `libomp.dylib` conflict:
+
+```text
+OMP: Error #15: Initializing libomp.dylib, but found libomp.dylib already initialized.
+OMP: Hint This means that multiple copies of the OpenMP runtime have been linked into the program. That is dangerous, since it can degrade performance or cause incorrect results. The best thing to do is to ensure that only a single OpenMP runtime is linked into the process, e.g. by avoiding static linking of the OpenMP runtime in any library. As an unsafe, unsupported, undocumented workaround you can set the environment variable KMP_DUPLICATE_LIB_OK=TRUE to allow the program to continue to execute, but that may cause crashes or silently produce incorrect results. For more information, please see http://openmp.llvm.org/
 ```
 
 ### Linux
@@ -68,134 +102,127 @@ Follow the recipe below:
 conda create -n pyserini python=3.12 -y
 conda activate pyserini
 
-# Inside the new environment...
 conda install -c conda-forge openjdk=21 maven -y
+conda install -c conda-forge pytorch -y
+conda install -c pytorch -c conda-forge faiss-cpu=1.16.0 -y
 
-# from https://pytorch.org/get-started/locally/
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install 'pyserini[optional]'
 
-# If you have a CUDA-enabled GPU and want to use it (e.g., with --device cuda), install the CUDA version of PyTorch instead
-# Find the right command for your CUDA version at https://pytorch.org/get-started/locally/, for example, for CUDA 12.6:
-# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+# Needed for multimodal retrieval
+pip install git+https://github.com/openai/CLIP.git
+```
 
-# If you want the optional dependencies, otherwise skip
-conda install -c pytorch faiss-cpu -y
+As of November 2026, the above recipe has been verified to work on a Linux server (with no GPU) running Ubuntu 24.04.4 LTS.
+The above recipe pulled in the following dependency versions:
 
-# Good idea to always explicitly specify the latest version, found here: https://pypi.org/project/pyserini/
-pip install pyserini==latest
-# If you want the optional dependencies, otherwise skip; the temperamental packages are already installed at this point
-# so should be smooth...
-pip install 'pyserini==latest'
+```bash
+$ pip list | egrep '(transformers|torch|faiss)\s'
+faiss                     1.16.0
+torch                     2.15.0
+transformers              5.23.0
 ```
 
 ### Verifying the Installation
 
 By this point, Pyserini should have been installed.
-It might be worthwhile to do a bit of sanity checking, per below.
+It might be worthwhile to do a bit of sanity checking: instructions are provided below.
 
-To confirm that bag-of-words retrieval is working correctly, you can run the BM25 baseline on the MS MARCO passage ranking task:
+To verify that sparse retrieval is working correctly, run the BM25 baseline on the NFCorpus collection in BEIR:
 
 ```bash
 python -m pyserini.search.lucene \
-  --threads 16 --batch-size 128 \
-  --index msmarco-v1-passage \
-  --topics msmarco-passage-dev-subset \
-  --output run.msmarco-v1-passage.bm25-default.dev.txt \
-  --bm25 --output-format msmarco
+  --index beir-v1.0.0-nfcorpus.flat \
+  --topics beir-v1.0.0-nfcorpus-test \
+  --output run.beir.bm25-flat.nfcorpus.txt \
+  --output-format trec \
+  --hits 1000 --bm25 --remove-query
 
-python -m pyserini.eval.msmarco_passage_eval \
-  msmarco-passage-dev-subset run.msmarco-v1-passage.bm25-default.dev.txt
+python -m pyserini.eval.trec_eval -c -m ndcg_cut.10 beir-v1.0.0-nfcorpus-test run.beir.bm25-flat.nfcorpus.txt
+python -m pyserini.eval.trec_eval -c -m recall.100 beir-v1.0.0-nfcorpus-test run.beir.bm25-flat.nfcorpus.txt
+python -m pyserini.eval.trec_eval -c -m recall.1000 beir-v1.0.0-nfcorpus-test run.beir.bm25-flat.nfcorpus.txt
 ```
 
 Expected Results:
 
 ```text
-MRR @10: 0.18741227770955546
+ndcg_cut_10             all     0.3218
+recall_100              all     0.2457
+recall_1000             all     0.3704
 ```
 
-To confirm that dense retrieval is working correctly with Lucene using an HNSW index:
+To verify that dense retrieval (using BGE-base-en-v1.5) is working correctly with Lucene on the NFCorpus collection in BEIR:
 
-``` bash
+```bash
 python -m pyserini.search.lucene \
-  --threads 16 --batch-size 128 --dense --hnsw \
-  --index msmarco-v1-passage.bge-base-en-v1.5.hnsw \
-  --topics dl19-passage \
+  --dense --flat \
+  --index beir-v1.0.0-nfcorpus.bge-base-en-v1.5.flat \
+  --topics beir-v1.0.0-nfcorpus-test \
   --onnx-encoder BgeBaseEn15 \
-  --output run.msmarco-v1-passage.bge-base-en-v1.5.lucene-hnsw.onnx.dl19.txt \
-  --hits 1000 --ef-search 1000
+  --output run.beir.bge-base-en-v1.5.lucene-flat.nfcorpus.txt \
+  --output-format trec \
+  --hits 1000 --remove-query
 
-python -m pyserini.eval.trec_eval -c -l 2 -m map dl19-passage \
-  run.msmarco-v1-passage.bge-base-en-v1.5.lucene-hnsw.onnx.dl19.txt
-python -m pyserini.eval.trec_eval -c -m ndcg_cut.10 dl19-passage \
-  run.msmarco-v1-passage.bge-base-en-v1.5.lucene-hnsw.onnx.dl19.txt
-python -m pyserini.eval.trec_eval -c -l 2 -m recall.1000 dl19-passage \
-  run.msmarco-v1-passage.bge-base-en-v1.5.lucene-hnsw.onnx.dl19.txt
+python -m pyserini.eval.trec_eval -c -m ndcg_cut.10 beir-v1.0.0-nfcorpus-test run.beir.bge-base-en-v1.5.lucene-flat.nfcorpus.txt
+python -m pyserini.eval.trec_eval -c -m recall.100 beir-v1.0.0-nfcorpus-test run.beir.bge-base-en-v1.5.lucene-flat.nfcorpus.txt
+python -m pyserini.eval.trec_eval -c -m recall.1000 beir-v1.0.0-nfcorpus-test run.beir.bge-base-en-v1.5.lucene-flat.nfcorpus.txt
 ```
 
 Expected Results:
 
 ```text
-map                       all    0.4486
-ndcg_cut_10               all    0.7016
-recall_1000               all    0.8441
+ndcg_cut_10             all     0.3738
+recall_100              all     0.3368
+recall_1000             all     0.6622
 ```
 
-To confirm that dense retrieval is working correctly with Faiss, run our TCT-ColBERT (v2) model on the MS MARCO passage ranking task:
+To verify that dense retrieval (using BGE-base-en-v1.5) is working correctly with Faiss on the NFCorpus collection in BEIR:
 
 ```bash
 python -m pyserini.search.faiss \
-  --topics msmarco-passage-dev-subset \
-  --index msmarco-v1-passage.tct_colbert-v2-hnp \
-  --encoded-queries tct_colbert-v2-hnp-msmarco-passage-dev-subset \
-  --threads 12 --batch-size 384 \
-  --output run.msmarco-passage.tct_colbert-v2.bf.tsv \
-  --output-format msmarco
+  --encoder-class auto \
+  --encoder BAAI/bge-base-en-v1.5 --l2-norm \
+  --query-prefix "Represent this sentence for searching relevant passages:" \
+  --index beir-v1.0.0-nfcorpus.bge-base-en-v1.5 \
+  --topics beir-v1.0.0-nfcorpus-test \
+  --output run.beir.bge-base-en-v1.5.faiss.nfcorpus.txt \
+  --hits 1000 --remove-query
 
-python -m pyserini.eval.msmarco_passage_eval \
-  msmarco-passage-dev-subset run.msmarco-passage.tct_colbert-v2.bf.tsv
+python -m pyserini.eval.trec_eval -c -m ndcg_cut.10 beir-v1.0.0-nfcorpus-test run.beir.bge-base-en-v1.5.faiss.nfcorpus.txt
+python -m pyserini.eval.trec_eval -c -m recall.100 beir-v1.0.0-nfcorpus-test run.beir.bge-base-en-v1.5.faiss.nfcorpus.txt
+python -m pyserini.eval.trec_eval -c -m recall.1000 beir-v1.0.0-nfcorpus-test run.beir.bge-base-en-v1.5.faiss.nfcorpus.txt
 ```
 
 Expected Results:
 
 ```text
-#####################
-MRR @10: 0.3584
-QueriesRanked: 6980
-#####################
+ndcg_cut_10             all     0.3735
+recall_100              all     0.3368
+recall_1000             all     0.6622
 ```
 
-If you've gotten to here, then everything should be working properly.
+If you've gotten this far, then everything should be working properly.
 
 ## Development Installation
 
-If you're planning on just _using_ Pyserini, then the instructions above are fine.
-However, if you're planning on contributing to the codebase or want to work with the latest not-yet-released features, you'll need a development installation.
+If you're planning on just _using_ Pyserini, the above instructions should work fine.
+However, if you're planning on contributing to the codebase or want to use not-yet-released features, you'll need a development installation.
 
-Start the same way as the install above, but **don't** install `pip install pyserini`.
-
-Instead, clone the Pyserini repo with the `--recurse-submodules` option to make sure the `tools/` submodule also gets cloned:
-
-```bash
-git clone git@github.com:castorini/pyserini.git --recurse-submodules
-```
-
-The `tools/` directory, which contains evaluation tools and scripts, is actually [this repo](https://github.com/castorini/anserini-tools), integrated as a [Git submodule](https://git-scm.com/book/en/v2/Git-Tools-Submodules) (so that it can be shared across related projects).
-Change into the `pyserini` subdirectory and build as follows (you might get warnings, but okay to ignore):
+Start the same way as the install above, but skip installing Pyserini using `pip`.
+Instead, clone the Pyserini repo:
 
 ```bash
-cd tools/eval && tar xvfz trec_eval.9.0.4.tar.gz && cd trec_eval.9.0.4 && make && cd ../../..
-cd tools/eval/ndeval && make && cd ../../..
+git clone git@github.com:castorini/pyserini.git
 ```
 
 Then, in the `pyserini` clone, use `pip` to add an ["editable" installation](https://setuptools.pypa.io/en/latest/userguide/development_mode.html), as follows:
 
 ```bash
-pip install -e .
+pip install -e '.[optional]'
 ```
 
 Next, you'll need to clone and build [Anserini](http://anserini.io/).
 It makes sense to put both `pyserini/` and `anserini/` in a common folder.
-After you've successfully built Anserini, copy the fatjar, which will be `target/anserini-X.Y.Z-SNAPSHOT-fatjar.jar` into `pyserini/resources/jars/`.
+After you've successfully built Anserini, copy the fatjar, which will be `target/anserini-X.Y.Z-SNAPSHOT-fatjar.jar`, into `pyserini/resources/jars/`.
 As with the `pip` installation, a potential source of frustration is incompatibility among different versions of underlying dependencies.
 
 You can confirm everything is working by running the unit tests:
@@ -204,22 +231,8 @@ You can confirm everything is working by running the unit tests:
 python -m unittest discover -s tests
 ```
 
+Topics and qrels live in a [centralized repo containing evaluation data](https://github.com/castorini/eval), shared across Anserini and Pyserini.
+Pyserini fetches what it needs on demand and caches it under `$PYSERINI_CACHE` (`~/.cache/pyserini` by default), so there is nothing to build here.
+The `trec_eval` implementation used by `pyserini.eval.trec_eval` comes from the Anserini fatjar, which you copied above.
+
 Assuming all tests pass, you should be ready to go!
-
-## Troubleshooting Tips
-
-The above guide handles JVM installation via Conda. If you are using your own Java environment and get an error about Java version mismatch, it's likely an issue with your `JAVA_HOME` environmental variable.
-In `bash`, use `echo $JAVA_HOME` to find out what the environmental variable is currently set to, and use `export JAVA_HOME=/path/to/java/home` to change it to the correct path.
-On a Linux system, the correct path might look something like `/usr/lib/jvm/java-21`.
-Unfortunately, we are unable to offer more concrete advice since the actual path depends on your OS, which JDK you're using, and a host of other factors.
-
-## Internal Notes
-
-At the University of Waterloo, we have two (CPU) development servers, `tuna` and `orca`.
-Note that on these two servers, the root disk (where your home directory is mounted) doesn't have much space.
-So, you need to set pyserini cache path to scratch space.
-
-+ For tuna, create the dir `/tuna1/scratch/{username}`
-+ For orca, create the dir `/store/scratch/{username}`
-
-Set the `PYSERINI_CACHE` environment variable to point to the directory you created above.

@@ -6,6 +6,7 @@ Binary passage retriever (BPR) is a two-stage ranking approach that represents t
 
 We have replicated BPR's results and incorporated the model into Pyserini.
 To be clear, we started with model checkpoint and index releases in the official [BPR repo](https://github.com/studio-ousia/bpr) and did _not_ train the query and passage encoders from scratch.
+Both are available on Hugging Face as [`castorini/bpr-nq-question-encoder`](https://huggingface.co/castorini/bpr-nq-question-encoder) and [`castorini/bpr-nq-ctx-encoder`](https://huggingface.co/castorini/bpr-nq-ctx-encoder), respectively.
 
 This guide provides instructions to reproduce the BPR's results.
 
@@ -26,14 +27,13 @@ BPR with brute-force index:
 python -m pyserini.search.faiss \
   --index wikipedia-dpr-100w.bpr-single-nq \
   --topics dpr-nq-test \
-  --encoded-queries bpr_single_nq-nq-test \
+  --encoder castorini/bpr-nq-question-encoder \
+  --encoder-class bpr \
   --output runs/run.bpr.rerank.nq-test.nq.hash.trec \
   --batch-size 512 --threads 16 \
   --hits 100 --binary-hits 1000 \
   --searcher bpr --rerank
 ```
-
-The option `--encoded-queries` specifies the use of encoded queries (i.e., queries that have already been converted into dense vectors and cached).
 
 To evaluate, first convert the TREC output format to DPR's `json` format:
 
@@ -51,9 +51,9 @@ python -m pyserini.eval.evaluate_dpr_retrieval \
 
 Results:
 
-```
-Top20  accuracy: 0.7792
-Top100 accuracy: 0.8571
+```text
+Top20   accuracy: 0.7792
+Top100  accuracy: 0.8571
 ```
 
 ## Reproduction Log[*](reproducibility.md)
@@ -63,3 +63,4 @@ Top100 accuracy: 0.8571
 + Results reproduced by [@lintool](https://github.com/lintool) on 2022-12-24 (commit [`0c495c`](https://github.com/castorini/pyserini/commit/0c495cf2999dda980eb1f85efa30a4323cef5855))
 + Results reproduced by [@lintool](https://github.com/lintool) on 2023-01-10 (commit [`7dafc4`](https://github.com/castorini/pyserini/commit/7dafc4f918bd44ada3771a5c81692ab19cc2cae9))
 + Results reproduced by [@lintool](https://github.com/lintool) on 2024-10-07 (commit [`3f7609`](https://github.com/castorini/pyserini/commit/3f76099a73820afee12496c0354d52ca6a6175c2))
++ Results reproduced by [@lintool](https://github.com/lintool) on 2026-07-02 (commit [`ef7398b`](https://github.com/castorini/pyserini/commit/ef7398baec47c18a90757ce6d1cc815682432e1a))

@@ -4,7 +4,7 @@ In a [previous guide](conceptual-framework2.md), we introduced a conceptual fram
 This guide offers a deeper dive with learned sparse retrieval, where we use SPLADE-v3, a learned sparse model to encode the corpus into sparse vectors, index them into retrieval system with inverted index, and finally perform retrieval and evaluation.
 
 If you're a Waterloo student traversing the [onboarding path](https://github.com/lintool/guide/blob/master/ura.md) (which [starts here](https://github.com/castorini/anserini/blob/master/docs/start-here.md)),
-make sure you've first done the previous step, [reproducing a dense retrieval baseline for NFCorpus](experiments-nfcorpus.md).
+make sure you've first done the previous step, [a deeper dive into dense and sparse representations](conceptual-framework2.md).
 In general, don't try to rush through this guide by just blindly copying and pasting commands into a shell;
 that's what I call [cargo culting](https://en.wikipedia.org/wiki/Cargo_cult_programming).
 Instead, really try to understand what's going on.
@@ -13,7 +13,8 @@ Following the onboarding path, this lesson does **not** introduce any new concep
 Rather, the focus is to solidify previously introduced concepts and to connect the bi-encoder architecture to implementations in Pyserini.
 Informally, we're "peeling back the covers".
 
-**Learning outcomes** for this guide, building on previous steps in the onboarding path, are divided into three parts.
+**Learning outcomes** for this guide, building on previous steps in the onboarding path, are as follows:
+
 1. Be able to encode a corpus into its sparse vector representations with SPLADE-v3.
 2. Be able to index them into a retrieval system using Lucene inverted index.
 3. Be able to compute query-document scores (i.e., retrieval scores) with pyserini for SPLADE retrieval.
@@ -45,10 +46,12 @@ Start by creating the directories where we will store the encoded documents:
 mkdir encode
 cd encode
 mkdir nfcorpus.splade-v3
+cd ..
 ```
 
 We can then setup to use SPLADE-v3:
 First, we need to request access to SPLADE-v3 model on Hugging Face since it is gated:
+
 1. Create an account for Hugging Face: https://huggingface.co/join
 2. Go to the model page on Hugging Face: [Splade-v3](https://huggingface.co/naver/splade-v3)
 3. Click the "Log In" button.
@@ -67,6 +70,7 @@ hf auth login
 ```
 
 You’ll be prompted to enter your Hugging Face API token. You can generate a token from your Hugging Face account settings:
+
 1. Go to https://huggingface.co/settings/tokens.
 2. Click **"New token"** to generate a token.
 3. For your token's permissions, give “Read access to contents of all public gated repos you can access”.
@@ -90,25 +94,30 @@ python -m pyserini.encode \
 
 Use `--device cuda` for faster encoding if you have a CUDA-enabled GPU.
 
+This command uses the default batch size of 64, which needs roughly 10 GB of RAM.
+If the process exits with nothing but `Killed`, that was the kernel's out-of-memory killer: add `--batch-size 8` to the `encoder` arguments.
+Encoding then takes about 27 minutes on a 12-core CPU, and the nDCG@10 score below is unchanged.
+
 Next, we will index the encoded corpus using inverted index into a retrieval system.
 
 ```bash
 python -m pyserini.index.lucene \
   --collection JsonVectorCollection \
   --input encode/nfcorpus.splade-v3 \
-  --index index/nfcorpus.splade-v3 \
+  --index indexes/nfcorpus.splade-v3 \
   --generator DefaultLuceneDocumentGenerator \
   --threads 4 \
   --impact \
   --pretokenized
 ```
+
 Here, we used pretokenized flag as splade already split the text into tokens (words and subwords) in the sparse vector.
 
 Perform retrieval:
 
 ```bash
 python -m pyserini.search.lucene \
-  --index index/nfcorpus.splade-v3 \
+  --index indexes/nfcorpus.splade-v3 \
   --topics collections/nfcorpus/queries.tsv \
   --output runs/run.splade.txt \
   --hits 1000 \
@@ -118,7 +127,8 @@ python -m pyserini.search.lucene \
   --impact \
   --threads 4
 ```
-The runs will be stored in runs/run.splade.txt.
+
+The runs will be stored in `runs/run.splade.txt`.
 
 And evaluate the retrieval run:
 
@@ -130,7 +140,7 @@ python -m pyserini.eval.trec_eval \
 
 The expected results are:
 
-```
+```text
 ndcg_cut_10           	all	0.3624
 ```
 
@@ -142,7 +152,7 @@ from pyserini.search.lucene import LuceneImpactSearcher
 from pyserini.encode import SpladeQueryEncoder
 
 encoder = SpladeQueryEncoder(model_name_or_path="naver/splade-v3", device='cuda' if torch.cuda.is_available() else 'cpu')
-searcher = LuceneImpactSearcher('index/nfcorpus.splade-v3', query_encoder=encoder)
+searcher = LuceneImpactSearcher('indexes/nfcorpus.splade-v3', query_encoder=encoder)
 hits = searcher.search('How to Help Prevent Abdominal Aortic Aneurysms')
 
 for i in range(0, 10):
@@ -151,7 +161,7 @@ for i in range(0, 10):
 
 The results should be as follows:
 
-```
+```text
  1 MED-4555 51131.000000
  2 MED-4423 36854.000000
  3 MED-3180 30411.000000
@@ -163,7 +173,7 @@ The results should be as follows:
  9 MED-4030 27699.000000
 10 MED-1194 27588.000000
 ```
-     
+
 To recap, what's the point for this exercise?
 
 + We see that a machine learning model can also be applied to generate sparse vectors.
@@ -171,7 +181,17 @@ To recap, what's the point for this exercise?
 + You now know how to encode a query into a query vector.
 
 Okay, that's it for this lesson.
-Before you move on, however, add an entry in the "Reproduction Log" at the bottom of this page, following the same format: use `yyyy-mm-dd`, make sure you're using a commit id that's on the main trunk of Pyserini, and use its 7-hexadecimal prefix for the link anchor text.
+
+Before you move on, however, add an entry in the "Reproduction Log" at the bottom of this page:
+
++ Follow the same format as the existing entries: make sure you use a commit id that's on the main trunk of Pyserini. Use its 7-hexadecimal prefix for the link anchor text (but the URL should contain the full commit hash).
++ Provide some details about your setup in the description of your pull request (e.g., operating system, environment and configuration, etc.).
++ Provide some indication of success (e.g., everything worked) or document issues you encountered.
++ Confirm that your new entry is chronologically sorted.
++ Include additional edits in the pull request if you think this exercise can be improved (e.g., you caught a typo or think a clarification is warranted).
+
+Do not send a separate pull request for each exercise in the onboarding path; instead, send a single pull request for all edits to the Pyserini repository.
+If you have any questions, look at previous pull requests for examples.
 
 ## Reproduction Log[*](reproducibility.md)
 
@@ -211,3 +231,150 @@ Before you move on, however, add an entry in the "Reproduction Log" at the botto
 + Results reproduced by [@h79yan](https://github.com/h79yan) on 2026-04-12 (commit [`b973a40`](https://github.com/castorini/pyserini/commit/b973a40904cde63a23257b9342a6b786ea43d52e))
 + Results reproduced by [@kwamearhinPORTFL](https://github.com/kwamearhinPORTFL) on 2026-04-23 (commit [`a8d2625`](https://github.com/castorini/pyserini/commit/a8d26258d37894379fc8a8988e9f49050e990940))
 + Results reproduced by [@Zixi-Sam-Tang](https://github.com/Zixi-Sam-Tang) on 2026-04-23 (commit [`b823fb0`](https://github.com/castorini/pyserini/commit/b823fb0af8c48e5a5163949dd499271336fe8f63))
++ Results reproduced by [@alex-wang101](https://github.com/alex-wang101) on 2026-04-25 (commit [`e9cd125`](https://github.com/castorini/pyserini/commit/e9cd1250b2fafa2b806fdb1214c121b2c6e991a7))
++ Results reproduced by [@Seun-Ajayi](https://github.com/Seun-Ajayi) on 2026-04-26 (commit [`1f12c67`](https://github.com/castorini/pyserini/commit/1f12c6760c95f36f87757d3efa0e3a7a7f2d9fc8))
++ Results reproduced by [@TahseenSust](https://github.com/TahseenSust) on 2026-04-29 (commit [`c8e8273`](https://github.com/castorini/pyserini/commit/c8e82737077c0990a501927b688cd014b29b4fa7))
++ Results reproduced by [@mohamedshakir3](https://github.com/mohamedshakir3) on 2026-05-02 (commit [`7ed1f31`](https://github.com/castorini/pyserini/commit/7ed1f31e74db66e75c41f5f95b92f5ccfeaced31))
++ Results reproduced by [@tqmsh](https://github.com/tqmsh) on 2026-05-03 (commit [`6adee73`](https://github.com/castorini/pyserini/commit/6adee73cf36255056a1c46dc5ecdb4b29b9ce1c5))
++ Results reproduced by [@mazleon](https://github.com/mazleon) on 2026-05-03 (commit [`6adee73`](https://github.com/castorini/pyserini/commit/6adee73cf36255056a1c46dc5ecdb4b29b9ce1c5))
++ Results reproduced by [@blissuche90](https://github.com/blissuche90) on 2026-05-04 (commit [`7ed1f31`](https://github.com/castorini/pyserini/commit/7ed1f31e74db66e75c41f5f95b92f5ccfeaced31))
++ Results reproduced by [@nasazzam](https://github.com/nasazzam) on 2026-05-13 (commit [`f8c4bd6`](https://github.com/castorini/pyserini/commit/f8c4bd6b53dc5cd661ba1c1741a438ae9c593571))
++ Results reproduced by [@VanshJain4](https://github.com/VanshJain4) on 2026-05-14 (commit [`b0bf30c`](https://github.com/castorini/pyserini/commit/b0bf30c9352e3dece016499840ef635fff5e98f3))
++ Results reproduced by [@Adebara123](https://github.com/Adebara123) on 2026-05-15 (commit [`e5d3a4a`](https://github.com/castorini/pyserini/commit/e5d3a4ae89c1da8a2ada97293278cd1f7142ee58))
++ Results reproduced by [@Bashir486](https://github.com/Bashir486) on 2026-05-22 (commit [`21a411a`](https://github.com/castorini/pyserini/commit/21a411aa65b88b01ed415ee6469df7a871537b43))
++ Results reproduced by [@masud70](https://github.com/masud70) on 2026-05-23 (commit [`21a411a`](https://github.com/castorini/pyserini/commit/21a411aa65b88b01ed415ee6469df7a871537b43))
++ Results reproduced by [@ibot1](https://github.com/ibot1) on 2026-05-23 (commit [`21a411a`](https://github.com/castorini/pyserini/commit/21a411aa65b88b01ed415ee6469df7a871537b43))
++ Results reproduced by [@grf932](https://github.com/grf932) on 2026-05-30 (commit [`4536186`](https://github.com/castorini/pyserini/commit/45361866da443a8127bf964f2095703dfd7b19a6))
++ Results reproduced by [@amulyabenarji777](https://github.com/amulyabenarji777) on 2026-05-30 (commit [`4536186`](https://github.com/castorini/pyserini/commit/45361866da443a8127bf964f2095703dfd7b19a6))
++ Results reproduced by [@Hayanaanaa](https://github.com/Hayanaanaa) on 2026-06-01 (commit [`95e88d0`](https://github.com/castorini/pyserini/commit/95e88d0e09c07a1c30b5aedbca2fc1b7deb95fe0))
++ Results reproduced by [@Maroibo](https://github.com/Maroibo) on 2026-06-02 (commit [`95e88d0`](https://github.com/castorini/pyserini/commit/95e88d0e09c07a1c30b5aedbca2fc1b7deb95fe0))
++ Results reproduced by [@rhea2801](https://github.com/rhea2801) on 2026-06-06 (commit [`0238dc5`](https://github.com/castorini/pyserini/commit/0238dc5e9a845625686b9ff89435dc607eed5f59))
++ Results reproduced by [@zxTomw](https://github.com/zxTomw) on 2026-06-11 (commit [`ab2d0bf`](https://github.com/castorini/pyserini/commit/ab2d0bf571d975c14f9d2b68a9058adebdf8894c))
++ Results reproduced by [@kenoi1](https://github.com/kenoi1) on 2026-06-12 (commit [`acf1698`](https://github.com/castorini/pyserini/commit/acf1698ea4cef1e76a8a2545b2b490fefa08ffef))
++ Results reproduced by [@nayanananto](https://github.com/nayanananto) on 2026-06-14 (commit [`30a1bba`](https://github.com/castorini/pyserini/commit/30a1bba1b409662787404208a0f8d5268a1b31b2))
++ Results reproduced by [@farhadmoradi66](https://github.com/farhadmoradi66) on 2026-06-19 (commit [`08fd23b`](https://github.com/castorini/pyserini/commit/08fd23b1262213c63661948f7b084fb3eb23ac2a))
++ Results reproduced by [@MasrurAjhor](https://github.com/MasrurAjhor) on 2026-06-21 (commit [`42ff49c`](https://github.com/castorini/pyserini/commit/42ff49c1393de811f46674188411a6970e0c85c6))
++ Results reproduced by [@Quaden2307](https://github.com/Quaden2307) on 2026-06-21 (commit [`42ff49c`](https://github.com/castorini/pyserini/commit/42ff49c1393de811f46674188411a6970e0c85c6))
++ Results reproduced by [@k22mitta](https://github.com/k22mitta) on 2026-06-28 (commit [`6d03d1e`](https://github.com/castorini/pyserini/commit/6d03d1e43e5d6bc424f4bd46ac978891661fcb55))
++ Results reproduced by [@sparshshah19](https://github.com/sparshshah19) on 2026-06-29 (commit [`6f48030`](https://github.com/castorini/pyserini/commit/6f48030cf786280625bc3ed6d2743374bd099e57))
++ Results reproduced by [@JonHolman](https://github.com/JonHolman) on 2026-06-29 (commit [`6d03d1e`](https://github.com/castorini/pyserini/commit/6d03d1e43e5d6bc424f4bd46ac978891661fcb55))
++ Results reproduced by [@Fustigate8933](https://github.com/Fustigate8933) on 2026-07-01 (commit [`ef7398b`](https://github.com/castorini/pyserini/commit/ef7398baec47c18a90757ce6d1cc815682432e1a))
++ Results reproduced by [@yashs33244](https://github.com/yashs33244) on 2026-07-05 (commit [`ef7398b`](https://github.com/castorini/pyserini/commit/ef7398baec47c18a90757ce6d1cc815682432e1a))
++ Results reproduced by [@muhammad-ali-arshad](https://github.com/muhammad-ali-arshad) on 2026-07-05 (commit [`ef7398b`](https://github.com/castorini/pyserini/commit/ef7398baec47c18a90757ce6d1cc815682432e1a))
++ Results reproduced by [@sepidfs](https://github.com/sepidfs) on 2026-07-09 (commit [`ef7398b`](https://github.com/castorini/pyserini/commit/ef7398baec47c18a90757ce6d1cc815682432e1a))
++ Results reproduced by [@NMA19](https://github.com/NMA19) on 2026-07-12 (commit [`e81bbf2`](https://github.com/castorini/pyserini/commit/e81bbf2cc89c83b327ad11bf460e8a9692b2bb83))
++ Results reproduced by [@abduldattijo](https://github.com/abduldattijo) on 2026-07-12 (commit [`e81bbf2`](https://github.com/castorini/pyserini/commit/e81bbf2cc89c83b327ad11bf460e8a9692b2bb83))
++ Results reproduced by [@abubinfahd](https://github.com/abubinfahd) on 2026-07-13 (commit [`e81bbf2`](https://github.com/castorini/pyserini/commit/e81bbf2cc89c83b327ad11bf460e8a9692b2bb83))
++ Results reproduced by [@sadia213](https://github.com/sadia213) on 2026-07-13 (commit [`e81bbf2`](https://github.com/castorini/pyserini/commit/e81bbf2cc89c83b327ad11bf460e8a9692b2bb83))
++ Results reproduced by [@mfrashidi](https://github.com/mfrashidi) on 2026-07-15 (commit [`a5a5b33`](https://github.com/castorini/pyserini/commit/a5a5b33d7b648cba2597230deefed73ed85f7eff))
++ Results reproduced by [@Leonoaix](https://github.com/Leonoaix) on 2026-07-16 (commit [`50e5dc8`](https://github.com/castorini/pyserini/commit/50e5dc8737538eb82dbe3592e53f736e175daac7))
++ Results reproduced by [@ayesha12321](https://github.com/ayesha12321) on 2026-07-25 (commit [`8f6964c`](https://github.com/ayesha12321/pyserini/commit/8f6964c95d01980b1700381998c2448d9e6232de))
++ Results reproduced by [@carlosp2001](https://github.com/carlosp2001) on 2026-07-26 (commit [`282c69d`](https://github.com/castorini/pyserini/commit/282c69d77b230e52eba5cff681bc80af51492bbc))
++ Results reproduced by [@mihiit](https://github.com/mihiit) on 2026-07-27 (commit [`39d1383`](https://github.com/castorini/pyserini/commit/39d1383c0ab350dee2ea65994c298a440ae3236e))
++ Results reproduced by [@BakaryGibba](https://github.com/BakaryGibba) on 2026-07-27 (commit [`8f6964c`](https://github.com/castorini/pyserini/commit/8f6964c95d01980b1700381998c2448d9e6232de))
++ Results reproduced by [@niloy-biswas](https://github.com/niloy-biswas) on 2026-07-30 (commit [`8f6964c`](https://github.com/castorini/pyserini/commit/8f6964c95d01980b1700381998c2448d9e6232de))
++ Results reproduced by [@dawoodkhandev](https://github.com/dawoodkhandev) on 2026-08-03 (commit [`9dcc206`](https://github.com/castorini/pyserini/commit/9dcc2063187b0d9770af2580a964091f1a08252b))
++ Results reproduced by [@Hamza-Nadif](https://github.com/Hamza-Nadif) on 2026-08-04 (commit [`7b13d9b`](https://github.com/castorini/pyserini/commit/7b13d9ba2dbb07bd6ceee269564f972a394f26ac))
++ Results reproduced by [@nomsou](https://github.com/nomsou) on 2026-08-07 (commit [`b81d99c`](https://github.com/castorini/pyserini/commit/b81d99c868e39cdbc9e420425e9b123dfa55bb95))
++ Results reproduced by [@Navid-Ebadi-2003](https://github.com/Navid-Ebadi-2003) on 2026-08-09 (commit [`583bbda`](https://github.com/castorini/pyserini/commit/583bbda9413bf81a57f043c7a2c9b3009dfc34ec))
++ Results reproduced by [@mehra-es](https://github.com/mehra-es) on 2026-08-11 (commit [`7f46990`](https://github.com/castorini/pyserini/commit/7f46990ecf3e3c7419de0ffb91fc8bfef4eaabcf))
++ Results reproduced by [@akshaldhal](https://github.com/akshaldhal) on 2026-08-12 (commit [`c16016f`](https://github.com/castorini/pyserini/commit/c16016f315feb83b0c4279cc69c8586dab33f424))
++ Results reproduced by [@Rex-fortune](https://github.com/Rex-fortune) on 2026-08-12 (commit [`583bbda`](https://github.com/castorini/pyserini/commit/583bbda9413bf81a57f043c7a2c9b3009dfc34ec))
++ Results reproduced by [@AhmadT198](https://github.com/AhmadT198) on 2026-08-16 (commit [`f8af512`](https://github.com/castorini/pyserini/commit/f8af512b484848924d462a67dd0d1cdcd419eb64))
++ Results reproduced by [@Evan-Lowry](https://github.com/Evan-Lowry) on 2026-08-17 (commit [`c16016f`](https://github.com/castorini/pyserini/commit/c16016f315feb83b0c4279cc69c8586dab33f424))
++ Results reproduced by [@sattipraveena3-sudo](https://github.com/sattipraveena3-sudo) on 2026-08-21 (commit [`e863f8e`](https://github.com/castorini/pyserini/commit/e863f8e301990cab979f327f5b292ddfcc94a1f7))
++ Results reproduced by [@agnesoyedokun](https://github.com/agnesoyedokun) on 2026-08-22 (commit [`9a5330a`](https://github.com/castorini/pyserini/commit/9a5330a2dcbabda99ccf70c6237a7caa92d5cef4))
++ Results reproduced by [@Ali-Sherazii](https://github.com/Ali-Sherazii) on 2026-08-25 (commit [`71072b4`](https://github.com/castorini/pyserini/commit/71072b4c94a1a6ba3d627f8b602b28fa2d9b9400))
++ Results reproduced by [@seangebob](https://github.com/seangebob) on 2026-08-26 (commit [`d476ebc`](https://github.com/castorini/pyserini/commit/d476ebc4fe1af2f3dee149bc2caec700a69e811f))
++ Results reproduced by [@nointro3493](https://github.com/nointro3493) on 2026-08-29 (commit [`9a5330a`](https://github.com/castorini/pyserini/commit/9a5330a2dcbabda99ccf70c6237a7caa92d5cef4))
++ Results reproduced by [@taherb22](https://github.com/taherb22) on 2026-08-30 (commit [`45b6ca2`](https://github.com/castorini/pyserini/commit/45b6ca2cbf14f61a38b6391b641e232fecba15a3))
++ Results reproduced by [@iwis19](https://github.com/iwis19) on 2026-08-30 (commit [`45b6ca2`](https://github.com/castorini/pyserini/commit/45b6ca2cbf14f61a38b6391b641e232fecba15a3))
++ Results reproduced by [@jnx01](https://github.com/jnx01) on 2026-08-31 (commit [`3664a5d`](https://github.com/castorini/pyserini/commit/3664a5dc840696471cd94ae5e3a51d4635c77edc))
++ Results reproduced by [@sliverdancer](https://github.com/sliverdancer) on 2026-09-01 (commit [`9a5330a`](https://github.com/castorini/pyserini/commit/9a5330a2dcbabda99ccf70c6237a7caa92d5cef4))
++ Results reproduced by [@ParsaA2006](https://github.com/ParsaA2006) on 2026-09-04 (commit [`b791648`](https://github.com/castorini/pyserini/commit/b791648ea88f301cc48d1e53943cae441ba068d8))
++ Results reproduced by [@Ben-geo](https://github.com/Ben-geo) on 2026-09-05 (commit [`b791648`](https://github.com/castorini/pyserini/commit/b791648ea88f301cc48d1e53943cae441ba068d8))
++ Results reproduced by [@mentaltraffic](https://github.com/mentaltraffic) on 2026-09-05 (commit [`b791648`](https://github.com/castorini/pyserini/commit/b791648ea88f301cc48d1e53943cae441ba068d8))
++ Results reproduced by [@datascientist970](https://github.com/datascientist970) on 2026-09-05 (commit [`7f46990`](https://github.com/castorini/pyserini/commit/7f46990ecf3e3c7419de0ffb91fc8bfef4eaabcf))
++ Results reproduced by [@kamrankhoxa](https://github.com/kamrankhoxa) on 2026-09-07 (commit [`139adc8`](https://github.com/castorini/pyserini/commit/139adc808413158c09510a7341cd6dcd3f122acc))
++ Results reproduced by [@zhouwinston1](https://github.com/zhouwinston1) on 2026-09-08 (commit [`a573331`](https://github.com/castorini/pyserini/commit/a573331fa442d7e0e78a3075f86daab99dad9af4))
++ Results reproduced by [@tanvirsarao](https://github.com/tanvirsarao) on 2026-09-09 (commit [`b0ad282`](https://github.com/castorini/pyserini/commit/b0ad28270848f9b34ca822827bf5f71717255e84))
++ Results reproduced by [@ahmadsiddiqui25](https://github.com/ahmadsiddiqui25) on 2026-09-13 (commit [`1cfdc41`](https://github.com/castorini/pyserini/commit/1cfdc418e5f61c5164914c0844ab6f6a9550683e))
++ Results reproduced by [@Pasindu-Madhuwantha](https://github.com/Pasindu-Madhuwantha) on 2026-09-13 (commit [`1cfdc41`](https://github.com/castorini/pyserini/commit/1cfdc418e5f61c5164914c0844ab6f6a9550683e))
++ Results reproduced by [@Kiarash-Ghaderi](https://github.com/Kiarash-Ghaderi) on 2026-09-13 (commit [`1cfdc41`](https://github.com/castorini/pyserini/commit/1cfdc418e5f61c5164914c0844ab6f6a9550683e))
++ Results reproduced by [@ivan2001kkk](https://github.com/ivan2001kkk) on 2026-09-13 (commit [`e1987ac`](https://github.com/castorini/pyserini/commit/e1987ac04443fa7b96a2e19c3d5062d3c734fa31))
++ Results reproduced by [@Ajay9450](https://github.com/Ajay9450) on 2026-09-15 (commit [`8cd04a8`](https://github.com/castorini/pyserini/commit/8cd04a8cc6f561f2c1d8dc89eaf4fbe83e9bad43))
++ Results reproduced by [@nimra-maqbool](https://github.com/nimra-maqbool) on 2026-09-15 (commit [`9ce69a0`](https://github.com/castorini/pyserini/commit/9ce69a00af048cc45c794989fd03ac2e1304924f))
++ Results reproduced by [@zahid111777](https://github.com/zahid111777) on 2026-09-16 (commit [`48cf385`](https://github.com/castorini/pyserini/commit/48cf385d927c33a4521876b253fe35cec65fb086))
++ Results reproduced by [@Daveed-shee](https://github.com/Daveed-shee) on 2026-09-19 (commit [`c6a9c9f`](https://github.com/castorini/pyserini/commit/c6a9c9f5ca5bed4af922a0e1f0bd2f9b9cb32577))
++ Results reproduced by [@Ehren-Chuah](https://github.com/Ehren-Chuah) on 2026-09-20 (commit [`c6a9c9f`](https://github.com/castorini/pyserini/commit/c6a9c9f5ca5bed4af922a0e1f0bd2f9b9cb32577))
++ Results reproduced by [@Firdovsirz](https://github.com/Firdovsirz) on 2026-09-21 (commit [`1227305`](https://github.com/castorini/pyserini/commit/1227305c19ddead8031e2532d55b12a1cfb2bd46))
++ Results reproduced by [@WahajAli14](https://github.com/WahajAli14) on 2026-09-21 (commit [`6591a33`](https://github.com/castorini/pyserini/commit/6591a3320737d31c652311743dae760438af0758))
++ Results reproduced by [@bmqube](https://github.com/bmqube) on 2026-09-23 (commit [`bd361f2`](https://github.com/castorini/pyserini/commit/bd361f26a0d6bbf66469a2c025cb0a12cba9a2df))
++ Results reproduced by [@mankydanky](https://github.com/mankydanky) on 2026-09-25 (commit [`bd361f2`](https://github.com/castorini/pyserini/commit/bd361f26a0d6bbf66469a2c025cb0a12cba9a2df))
++ Results reproduced by [@nabirarashid](https://github.com/nabirarashid) on 2026-09-26 (commit [`527c917`](https://github.com/castorini/pyserini/commit/527c917120ff154f84b09ff2b69dc8946085aae4))
++ Results reproduced by [@UmmayMaimonaChaman](https://github.com/UmmayMaimonaChaman) on 2026-09-28 (commit [`d3e2f33`](https://github.com/castorini/pyserini/commit/d3e2f337696c8a78b0c2fbc8f17b651a115eb653))
++ Results reproduced by [@GavinYou4](https://github.com/GavinYou4) on 2026-09-28 (commit [`cbee418`](https://github.com/castorini/pyserini/commit/cbee418be2df7ccecc2fe1344585523ee8f4429c))
++ Results reproduced by [@HasanMahmudShanto](https://github.com/HasanMahmudShanto) on 2026-10-03 (commit [`2aa191a`](https://github.com/castorini/pyserini/commit/2aa191adb329ae33002a27653e8ad53fab01f6ba))
++ Results reproduced by [@ifeanyidike](https://github.com/ifeanyidike) on 2026-10-03 (commit [`2aa191a`](https://github.com/castorini/pyserini/commit/2aa191adb329ae33002a27653e8ad53fab01f6ba))
++ Results reproduced by [@AmirhosseinGhobakhloo](https://github.com/AmirhosseinGhobakhloo) on 2026-10-04 (commit [`cbee418`](https://github.com/castorini/pyserini/commit/cbee418be2df7ccecc2fe1344585523ee8f4429c))
++ Results reproduced by [@rs105](https://github.com/rs105) on 2026-10-04 (commit [`2aa191a`](https://github.com/castorini/pyserini/commit/2aa191adb329ae33002a27653e8ad53fab01f6ba))
++ Results reproduced by [@gauraang01](https://github.com/gauraang01) on 2026-10-05 (commit [`2aa191a`](https://github.com/castorini/pyserini/commit/2aa191adb329ae33002a27653e8ad53fab01f6ba))
++ Results reproduced by [@aidanyee17](https://github.com/aidanyee17) on 2026-10-06 (commit [`2aa191a`](https://github.com/castorini/pyserini/commit/2aa191adb329ae33002a27653e8ad53fab01f6ba))
++ Results reproduced by [@htanugarapur](https://github.com/htanugarapur) on 2026-10-07 (commit [`2aa191a`](https://github.com/castorini/pyserini/commit/2aa191adb329ae33002a27653e8ad53fab01f6ba))
++ Results reproduced by [@utkarshg20](https://github.com/utkarshg20) on 2026-10-07 (commit [`b875d19`](https://github.com/castorini/pyserini/commit/b875d19a6ba5bd5d228e269a5f9ece3934c79360))
++ Results reproduced by [@Chen1919](https://github.com/Chen1919) on 2026-10-07 (commit [`55c7216`](https://github.com/castorini/pyserini/commit/55c72164406ca8ec59cbf4c1f17f3f430d072d53))
++ Results reproduced by [@cryptic0053](https://github.com/cryptic0053) on 2026-10-09 (commit [`b875d19`](https://github.com/castorini/pyserini/commit/b875d19a6ba5bd5d228e269a5f9ece3934c79360))
++ Results reproduced by [@Fuad-Rafi](https://github.com/Fuad-Rafi) on 2026-10-09 (commit [`fbfe965`](https://github.com/castorini/pyserini/commit/fbfe965fce10960029c7c616165c657704b63050))
++ Results reproduced by [@james-yu2005](https://github.com/james-yu2005) on 2026-10-10 (commit [`3ab268d`](https://github.com/castorini/pyserini/commit/3ab268d22bdfce34520fdc37ec9a77327b4cc9d6))
++ Results reproduced by [@anabansal](https://github.com/anabansal) on 2026-10-11 (commit [`3ab268d`](https://github.com/castorini/pyserini/commit/3ab268d22bdfce34520fdc37ec9a77327b4cc9d6))
++ Results reproduced by [@nathyBekele](https://github.com/nathyBekele) on 2026-10-11 (commit [`3ab268d`](https://github.com/castorini/pyserini/commit/3ab268d22bdfce34520fdc37ec9a77327b4cc9d6))
++ Results reproduced by [@rasyosef](https://github.com/rasyosef) on 2026-10-12 (commit [`c42e4ff`](https://github.com/castorini/pyserini/commit/c42e4ff8da1e69254ccbb40c23685997598f712a))
++ Results reproduced by [@capemox](https://github.com/capemox) on 2026-10-13 (commit [`c42e4ff`](https://github.com/castorini/pyserini/commit/c42e4ff8da1e69254ccbb40c23685997598f712a))
++ Results reproduced by [@GuranshSinghKohli](https://github.com/GuranshSinghKohli) on 2026-10-16 (commit [`4c51783`](https://github.com/castorini/pyserini/commit/4c51783a0a686c6097b5cb9bb981e35e880123a6))
++ Results reproduced by [@Ninjacat10](https://github.com/Ninjacat10) on 2026-10-16 (commit [`2187cda`](https://github.com/castorini/pyserini/commit/2187cda8b8a9f91dd009f251f5af6c6992471f0f))
++ Results reproduced by [@somanshudev](https://github.com/somanshudev) on 2026-10-17 (commit [`4c51783`](https://github.com/castorini/pyserini/commit/4c51783a0a686c6097b5cb9bb981e35e880123a6))
++ Results reproduced by [@isogand](https://github.com/isogand) on 2026-10-17 (commit [`2b81573`](https://github.com/castorini/pyserini/commit/2b815732976f8d7841a22dac632760ef0e7d7498))
++ Results reproduced by [@Kannav02](https://github.com/Kannav02) on 2026-10-17 (commit [`d507fc6`](https://github.com/castorini/pyserini/commit/d507fc64a8757938e36de6e31ab03203b8fcd4c6))
++ Results reproduced by [@natty6418](https://github.com/natty6418) on 2026-10-17 (commit [`d507fc6`](https://github.com/castorini/pyserini/commit/d507fc64a8757938e36de6e31ab03203b8fcd4c6))
++ Results reproduced by [@mahmoudfarhat13](https://github.com/mahmoudfarhat13) on 2026-10-19 (commit [`0042ad3`](https://github.com/castorini/pyserini/commit/0042ad3118817858e525dd9cc2e786d9cc3f2810))
++ Results reproduced by [@msghik](https://github.com/msghik) on 2026-10-19 (commit [`e73f360`](https://github.com/castorini/pyserini/commit/e73f360ca37c24b20e5b6dce42a81c837d88b100))
++ Results reproduced by [@garvitkaushik-123](https://github.com/garvitkaushik-123) on 2026-10-20 (commit [`71ab9d7`](https://github.com/castorini/pyserini/commit/71ab9d77191c3ea930592edca4caa8e35068aa91))
++ Results reproduced by [@saadbinather](https://github.com/saadbinather) on 2026-10-20 (commit [`ef7c2ed`](https://github.com/castorini/pyserini/commit/ef7c2edf71e0402bca8d8826d3c7b55d42d6fabb))
++ Results reproduced by [@BingjieQian-cs](https://github.com/BingjieQian-cs) on 2026-10-21 (commit [`71ab9d7`](https://github.com/castorini/pyserini/commit/71ab9d77191c3ea930592edca4caa8e35068aa91))
++ Results reproduced by [@Jaasia25](https://github.com/Jaasia25) on 2026-10-22 (commit [`803cced`](https://github.com/castorini/pyserini/commit/803cced6c5e1fdfe4a35411591fffccafa36b022))
++ Results reproduced by [@moghazym](https://github.com/moghazym) on 2026-10-24 (commit [`03faa9a`](https://github.com/castorini/pyserini/commit/03faa9ac1709dcc142bd7d1b489df982e9313d84))
++ Results reproduced by [@AliMohammadiiii](https://github.com/AliMohammadiiii) on 2026-10-24 (commit [`03faa9a`](https://github.com/castorini/pyserini/commit/03faa9ac1709dcc142bd7d1b489df982e9313d84))
++ Results reproduced by [@mobinano](https://github.com/mobinano) on 2026-10-24 (commit [`59cd35f`](https://github.com/castorini/pyserini/commit/59cd35fb85f46ab517a68db7ac9b180f6dfd6dbb))
++ Results reproduced by [@Dristy03](https://github.com/Dristy03) on 2026-10-24 (commit [`bc2a172`](https://github.com/castorini/pyserini/commit/bc2a172c1143a3233cc320c12068a312a4151958))
++ Results reproduced by [@paudelanil](https://github.com/paudelanil) on 2026-10-26 (commit [`9a89de0`](https://github.com/castorini/pyserini/commit/9a89de0348e03f722d1cb6d67f5cdc68e7609712))
++ Results reproduced by [@StephenRebel](https://github.com/StephenRebel) on 2026-10-27 (commit [`bc2a172`](https://github.com/castorini/pyserini/commit/bc2a172c1143a3233cc320c12068a312a4151958))
++ Results reproduced by [@orangepineapple](https://github.com/orangepineapple) on 2026-10-28 (commit [`bc2a172`](https://github.com/castorini/pyserini/commit/bc2a172c1143a3233cc320c12068a312a4151958))
++ Results reproduced by [@Jamal-Ahmed-Khan](https://github.com/Jamal-Ahmed-Khan) on 2026-10-28 (commit [`52ace58`](https://github.com/castorini/pyserini/commit/52ace582dd46ae444f16e91cef4702d46d5a719c))
++ Results reproduced by [@AwwalMudashir](https://github.com/AwwalMudashir) on 2026-10-30 (commit [`bc2a172`](https://github.com/castorini/pyserini/commit/bc2a172c1143a3233cc320c12068a312a4151958))
++ Results reproduced by [@bardia1122](https://github.com/bardia1122) on 2026-10-31 (commit [`6602a8e`](https://github.com/castorini/pyserini/commit/6602a8e2b447365f1bdbcb4a333dc752c2a9694a))
++ Results reproduced by [@pawansapkota100](https://github.com/pawansapkota100) on 2026-10-31 (commit [`3c1b8b8`](https://github.com/castorini/pyserini/commit/3c1b8b8f6c3f60a756398d73c42817e58a67869d))
++ Results reproduced by [@junieberry](https://github.com/junieberry) on 2026-10-31 (commit [`6602a8e`](https://github.com/castorini/pyserini/commit/6602a8e2b447365f1bdbcb4a333dc752c2a9694a))
++ Results reproduced by [@nothingdev32](https://github.com/nothingdev32) on 2026-11-03 (commit [`4d8170f`](https://github.com/castorini/pyserini/commit/4d8170fbecce5e6d1077109124f5d0bfe6c9d1df))
++ Results reproduced by [@fakhirhassan](https://github.com/fakhirhassan) on 2026-11-05 (commit [`6602a8e`](https://github.com/castorini/pyserini/commit/6602a8e2b447365f1bdbcb4a333dc752c2a9694a))
++ Results reproduced by [@marwa-kiani17](https://github.com/marwa-kiani17) on 2026-11-05 (commit [`8b4d2b8`](https://github.com/castorini/pyserini/commit/8b4d2b8e1bb7653bd492f896c87d33649223cc47))
++ Results reproduced by [@karanverma](https://github.com/karanverma) on 2026-11-05 (commit [`1948695`](https://github.com/castorini/pyserini/commit/19486954995f4517c670881145caf2f284f3be22))
++ Results reproduced by [@vardah-ch](https://github.com/vardah-ch) on 2026-11-08 (commit [`c846a61`](https://github.com/castorini/pyserini/commit/c846a610e224ff12155519be214bc12a5a794e24))
++ Results reproduced by [@rabiyasalehjee](https://github.com/rabiyasalehjee) on 2026-11-08 (commit [`c850268`](https://github.com/castorini/pyserini/commit/c850268135cba753c5d4aa16151eaf9399bc019f))
++ Results reproduced by [@Md7tz](https://github.com/Md7tz) on 2026-11-08 (commit [`98d326c`](https://github.com/castorini/pyserini/commit/98d326cd38bdab8a0f7e83d2dc6e0532e3638ec4))
++ Results reproduced by [@ghaus-malik](https://github.com/ghaus-malik) on 2026-11-09 (commit [`c76fe2f`](https://github.com/castorini/pyserini/commit/c76fe2fecda9ed79befae3c74a28ae6a4dbb3014))
++ Results reproduced by [@mrnabdulai](https://github.com/mrnabdulai) on 2026-11-09 (commit [`78d3d18`](https://github.com/castorini/pyserini/commit/78d3d180b10aaa2c722a0c08d5b43db1edf1a6e8))
++ Results reproduced by [@afroza-akter-cuet](https://github.com/afroza-akter-cuet) on 2026-11-10 (commit [`ce6c7b2`](https://github.com/castorini/pyserini/commit/ce6c7b2c6b747b93ffa7f07681ff063d86d9fd2f))
++ Results reproduced by [@MohammadAmanlou](https://github.com/MohammadAmanlou) on 2026-11-10 (commit [`2aa191a`](https://github.com/castorini/pyserini/commit/2aa191adb329ae33002a27653e8ad53fab01f6ba))
++ Results reproduced by [@MuhammadBilalKhan267](https://github.com/MuhammadBilalKhan267) on 2026-11-12 (commit [`70cf95d`](https://github.com/castorini/pyserini/commit/70cf95da2defae71a2cab39136ed77091f781a9b))
++ Results reproduced by [@stallionn](https://github.com/stallionn) on 2026-11-13 (commit [`70cf95d`](https://github.com/castorini/pyserini/commit/70cf95da2defae71a2cab39136ed77091f781a9b))
++ Results reproduced by [@nahid2003131](https://github.com/nahid2003131) on 2026-11-13 (commit [`70cf95d`](https://github.com/castorini/pyserini/commit/70cf95da2defae71a2cab39136ed77091f781a9b))
++ Results reproduced by [@musaarfah](https://github.com/musaarfah) on 2026-11-15 (commit [`ce6c7b2`](https://github.com/castorini/pyserini/commit/ce6c7b2c6b747b93ffa7f07681ff063d86d9fd2f))
++ Results reproduced by [@s4natk](https://github.com/s4natk) on 2026-11-17 (commit [`fe5ba10`](https://github.com/castorini/pyserini/commit/fe5ba101c37199038a08ac478e72fe566fbbb04b))
++ Results reproduced by [@UsmanGhias](https://github.com/UsmanGhias) on 2026-11-18 (commit [`88df101`](https://github.com/castorini/pyserini/commit/88df1014ad87dca35420368898d0b4a868dd14ef))
++ Results reproduced by [@capnmav77](https://github.com/capnmav77) on 2026-11-18 (commit [`dcddc58`](https://github.com/castorini/pyserini/commit/dcddc589f7987ec0c65d587c33b17eca75445011))
++ Results reproduced by [@sayyedwajih](https://github.com/sayyedwajih) on 2026-11-18 (commit [`3371237`](https://github.com/castorini/pyserini/commit/33712371e8964c42fe83faaac4b8f36ebb077839))
++ Results reproduced by [@AmirAshkanChavoshi](https://github.com/AmirAshkanChavoshi) on 2026-11-18 (commit [`3371237`](https://github.com/castorini/pyserini/commit/33712371e8964c42fe83faaac4b8f36ebb077839))
++ Results reproduced by [@MasihMoafi](https://github.com/MasihMoafi) on 2026-11-18 (commit [`3371237`](https://github.com/castorini/pyserini/commit/33712371e8964c42fe83faaac4b8f36ebb077839))
++ Results reproduced by [@pa06lak](https://github.com/pa06lak) on 2026-11-18 (commit [`3371237`](https://github.com/castorini/pyserini/commit/33712371e8964c42fe83faaac4b8f36ebb077839))
++ Results reproduced by [@sjyoo88](https://github.com/sjyoo88) on 2026-11-19 (commit [`88df101`](https://github.com/castorini/pyserini/commit/88df1014ad87dca35420368898d0b4a868dd14ef))
++ Results reproduced by [@AASani29](https://github.com/AASani29) on 2026-11-24 (commit [`1371f15`](https://github.com/castorini/pyserini/commit/1371f150cbecb80287549844e83cad7c87130988))

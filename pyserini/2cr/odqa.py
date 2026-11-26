@@ -16,18 +16,25 @@
 
 import argparse
 import importlib.resources
-import math
 import os
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from string import Template
 
 import yaml
+from pyserini.util import run_command
 
-from ._base import run_dpr_retrieval_eval_and_return_metric, convert_trec_run_to_dpr_retrieval_json, run_fusion, ok_str, \
-    fail_str
+from ._base import (
+    compare_reproduction_score,
+    convert_trec_run_to_dpr_retrieval_json,
+    format_reproduction_status,
+    format_run_command,
+    read_file,
+    run_dpr_retrieval_eval_and_return_metric,
+    run_fusion,
+)
 
 dense_threads = 16
 dense_batch_size = 512
@@ -36,20 +43,20 @@ sparse_batch_size = 128
 
 # The models: the rows of the results table will be ordered this way.
 models = {
-    'models':
-    ['BM25-k1_0.9_b_0.4',
-     'BM25-k1_0.9_b_0.4_dpr-topics',
-     'GarT5-RRF',
-     'DPR',
-     'DPR-DKRR',
-     'DPR-Hybrid',
-     'GarT5RRF-DKRR-RRF'
-     ]
+    'models': [
+        'BM25-k1_0.9_b_0.4',
+        'BM25-k1_0.9_b_0.4_dpr-topics',
+        'GarT5-RRF',
+        'DPR',
+        'DPR-DKRR',
+        'DPR-Hybrid',
+        'GarT5RRF-DKRR-RRF'
+    ]
 }
 
 evaluate_dpr_retrieval_metric_definitions = {
-        'Top5-1000': '--topk 5 20 100 500 1000',
-        'Top5-100': '--topk 5 20 100'
+    'Top5-1000': '--topk 5 20 100 500 1000',
+    'Top5-100': '--topk 5 20 100'
 }
 
 # global vars
@@ -67,22 +74,11 @@ HITS_1K = {'GarT5-RRF', 'DPR-DKRR', 'DPR-Hybrid'}
 def print_results(table, metric, topics):
     print(f'Metric = {metric}, Topics = {topics}')
     for model in models['models']:
-        print(' ' * 32, end='')
+        print(' ' * 4, end='')
         print(f'{model:30}', end='')
         key = f'{model}'
-        print(f'{table[key][metric]:7.2f}', end='\n')
+        print(f'{table[key][metric]:7.4f}', end='\n')
     print('')
-
-
-def format_run_command(raw):
-    return raw.replace('--encoded-queries', '\\\n  --encoded-queries') \
-        .replace('--encoder', '\\\n  --encoder') \
-        .replace('--topics', '\\\n  --topics') \
-        .replace('--index', '\\\n  --index') \
-        .replace('--output', '\\\n  --output') \
-        .replace('--threads', '\\\n  --threads') \
-        .replace('--bm25', '\\\n  --bm25') \
-        .replace('--hits 100', '\\\n  --hits 100')
 
 
 def format_hybrid_search_command(raw):
@@ -109,14 +105,6 @@ def format_eval_command(raw):
         .replace('--topk', '\\\n  --topk')
 
 
-def read_file(f):
-    fin = open(importlib.resources.files('pyserini.2cr')/f, 'r')
-    text = fin.read()
-    fin.close()
-
-    return text
-
-
 def list_conditions():
     for model in models['models']:
         print(model)
@@ -136,10 +124,10 @@ def generate_table_rows(table, table_id, commands, convert_commands, eval_comman
             s = s.substitute(table_cnt=table_id,
                              row_cnt=row_cnt,
                              model=model,
-                             TQA_Top20=table[model][TQA_TOPICS]['Top20'],
-                             TQA_Top100=table[model][TQA_TOPICS]['Top100'],
-                             NQ_Top20=table[model][NQ_TOPICS]['Top20'],
-                             NQ_Top100=table[model][NQ_TOPICS]['Top100'],
+                             TQA_Top20=f"{table[model][TQA_TOPICS]['Top20']:.4f}",
+                             TQA_Top100=f"{table[model][TQA_TOPICS]['Top100']:.4f}",
+                             NQ_Top20=f"{table[model][NQ_TOPICS]['Top20']:.4f}",
+                             NQ_Top100=f"{table[model][NQ_TOPICS]['Top100']:.4f}",
                              cmd1=f'{commands[model][TQA_TOPICS][0]}',
                              cmd2=f'{commands[model][TQA_TOPICS][1]}',
                              cmd3=f'{commands[model][TQA_TOPICS][2]}',
@@ -157,10 +145,10 @@ def generate_table_rows(table, table_id, commands, convert_commands, eval_comman
             s = s.substitute(table_cnt=table_id,
                              row_cnt=row_cnt,
                              model=model,
-                             TQA_Top20=table[model][TQA_TOPICS]['Top20'],
-                             TQA_Top100=table[model][TQA_TOPICS]['Top100'],
-                             NQ_Top20=table[model][NQ_TOPICS]['Top20'],
-                             NQ_Top100=table[model][NQ_TOPICS]['Top100'],
+                             TQA_Top20=f"{table[model][TQA_TOPICS]['Top20']:.4f}",
+                             TQA_Top100=f"{table[model][TQA_TOPICS]['Top100']:.4f}",
+                             NQ_Top20=f"{table[model][NQ_TOPICS]['Top20']:.4f}",
+                             NQ_Top100=f"{table[model][NQ_TOPICS]['Top100']:.4f}",
                              fusion_cmd1=fusion_cmd_tqa[1],
                              fusion_cmd2=fusion_cmd_nq[1],
                              convert_cmd1=f'{convert_commands[model][TQA_TOPICS]}',
@@ -172,10 +160,10 @@ def generate_table_rows(table, table_id, commands, convert_commands, eval_comman
             s = s.substitute(table_cnt=table_id,
                              row_cnt=row_cnt,
                              model=model,
-                             TQA_Top20=table[model][TQA_TOPICS]['Top20'],
-                             TQA_Top100=table[model][TQA_TOPICS]['Top100'],
-                             NQ_Top20=table[model][NQ_TOPICS]['Top20'],
-                             NQ_Top100=table[model][NQ_TOPICS]['Top100'],
+                             TQA_Top20=f"{table[model][TQA_TOPICS]['Top20']:.4f}",
+                             TQA_Top100=f"{table[model][TQA_TOPICS]['Top100']:.4f}",
+                             NQ_Top20=f"{table[model][NQ_TOPICS]['Top20']:.4f}",
+                             NQ_Top100=f"{table[model][NQ_TOPICS]['Top100']:.4f}",
                              cmd1=commands[model][TQA_TOPICS][0],
                              cmd2=commands[model][NQ_TOPICS][0],
                              convert_cmd1=f'{convert_commands[model][TQA_TOPICS]}',
@@ -196,8 +184,8 @@ def generate_report(args):
 
     html_template = read_file('odqa_html.template')
     table_template = read_file('odqa_html_table.template')
-    tqa_yaml_path = importlib.resources.files('pyserini.2cr').joinpath('triviaqa.yaml')
-    nq_yaml_path = importlib.resources.files('pyserini.2cr').joinpath('naturalquestion.yaml')
+    tqa_yaml_path = importlib.resources.files('pyserini.2cr').joinpath('odqa_tqa.yaml')
+    nq_yaml_path = importlib.resources.files('pyserini.2cr').joinpath('odqa_nq.yaml')
 
     garrrf_ls = ['answers', 'titles', 'sentences']
     fusion_cmd_tqa = []
@@ -320,16 +308,21 @@ def generate_report(args):
         tables_html.append(Template(table_template).substitute(desc='Models', rows=all_rows))
 
         with open(args.output, 'w') as out:
-            out.write(Template(html_template).substitute(title=f'Retrieval for Open-Domain QA Datasets', tables=' '.join(tables_html)))
+            out.write(Template(html_template).substitute(title='Pyserini: Open-Domain QA Datasets', tables=' '.join(tables_html)))
 
 
-def run_conditions(args):
+def topic_configs():
+    return [
+        ('tqa', 'dpr-trivia-test', importlib.resources.files('pyserini.2cr').joinpath('odqa_tqa.yaml')),
+        ('nq', 'nq-test', importlib.resources.files('pyserini.2cr').joinpath('odqa_nq.yaml')),
+    ]
+
+
+def run_topic_conditions(args, topic_arg, default_topics, yaml_path):
     hits = 1000 if args.full_topk else 100
-    yaml_path = importlib.resources.files('pyserini.2cr').joinpath('triviaqa.yaml') \
-        if args.topics == 'tqa' else importlib.resources.files('pyserini.2cr').joinpath('naturalquestion.yaml')
-    topics = 'dpr-trivia-test' if args.topics == 'tqa' else 'nq-test'
-    start = time.time()
+    topics = default_topics
     table = defaultdict(lambda: defaultdict(lambda: 0.0))
+    print(f'# Running topic "{topic_arg}"\n')
 
     with yaml_path.open('r') as f:
         yaml_data = yaml.safe_load(f)
@@ -353,7 +346,7 @@ def run_conditions(args):
             print(f'model {name}:')
             if topics == 'nq-test' and name == 'BM25-k1_0.9_b_0.4_dpr-topics':
                 topics = 'dpr-nq-test'
-            elif args.topics == 'nq':
+            elif topic_arg == 'nq':
                 topics = 'nq-test'
             print(f'  - Topics: {topics}')
 
@@ -382,7 +375,7 @@ def run_conditions(args):
                         print(f'\n```bash\n{formatted_command}\n```\n')
                     if not os.path.exists(runfile[i]):
                         if not args.dry_run:
-                            os.system(cmd[i])
+                            run_command(cmd[i], capture_output=False)
 
             # fusion
             if 'RRF' in name:
@@ -417,7 +410,9 @@ def run_conditions(args):
                 topk_defs = evaluate_dpr_retrieval_metric_definitions['Top5-100']
                 if args.full_topk:
                     topk_defs = evaluate_dpr_retrieval_metric_definitions['Top5-1000']
-                score = run_dpr_retrieval_eval_and_return_metric(topk_defs, jsonfile)
+                # The DPR evaluation helper returns percentages; normalize once for 2CR.
+                score = {metric: value / 100 for metric, value in
+                         run_dpr_retrieval_eval_and_return_metric(topk_defs, jsonfile).items()}
             
             # comparing ground truth scores with the generated ones 
             for expected in condition['scores']:
@@ -425,11 +420,10 @@ def run_conditions(args):
                     if not args.skip_eval and metric not in score.keys():
                         continue
                     if not args.skip_eval:
-                        if math.isclose(score[metric], float(expected_score), abs_tol=2e-2):
-                            result_str = ok_str
-                        else:
-                            result_str = fail_str + f' expected {expected[metric]:.4f}'
-                        print(f'      {metric:7}: {score[metric]:.2f} {result_str}')
+                        expected_score = float(expected_score)
+                        status = compare_reproduction_score(score[metric], expected_score)
+                        result_str = format_reproduction_status(status, expected_score)
+                        print(f'      {metric:7}: {score[metric]:.4f} {result_str}')
                         table[name][metric] = score[metric]
                     else:
                         table[name][metric] = expected_score
@@ -439,9 +433,15 @@ def run_conditions(args):
     for metric in metric_ls:
         print_results(table, metric, topics)
 
+
+def run_conditions(args):
+    start = time.time()
+    for topic_arg, default_topics, yaml_path in topic_configs():
+        run_topic_conditions(args, topic_arg, default_topics, yaml_path)
+
     end = time.time()
-    start_str = datetime.fromtimestamp(start, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    end_str = datetime.fromtimestamp(end, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    start_str = datetime.fromtimestamp(start, tz=UTC).strftime('%Y-%m-%d %H:%M:%S')
+    end_str = datetime.fromtimestamp(end, tz=UTC).strftime('%Y-%m-%d %H:%M:%S')
 
     print('\n')
     print(f'Start time: {start_str}')
@@ -459,7 +459,6 @@ if __name__ == '__main__':
     # For actually running the experimental conditions
     parser.add_argument('--full-topk', action='store_true', default=False, help='Run topk 5-1000, default is topk 5-100')
     parser.add_argument('--all', action='store_true', default=False, help='Run all conditions.')
-    parser.add_argument('--topics', type=str, help='Topics to run [tqa, nq].', choices=['tqa', 'nq'], required=False)
     parser.add_argument('--condition', type=str, help='Condition to run.', required=False)
     parser.add_argument('--directory', type=str, help='Base directory.', default='', required=False)
     parser.add_argument('--dry-run', action='store_true', default=False, help='Print out commands but do not execute.')
@@ -473,18 +472,14 @@ if __name__ == '__main__':
 
     if args.generate_report:
         if not args.output:
-            print(f'Must specify report filename with --output.')
+            print('Must specify report filename with --output.')
             sys.exit()
 
         generate_report(args)
         sys.exit()
         
-    if not args.generate_report and not args.topics:
-        print(f'Must specify a topic [tqa, nq] when running an evaluation.')
-        sys.exit()
-
     if not args.all and not args.condition:
-        print(f'Must specify a specific condition using --condition or use --all to run all conditions.')
+        print('Must specify a specific condition using --condition or use --all to run all conditions.')
         sys.exit()
     
     if args.all and args.condition:

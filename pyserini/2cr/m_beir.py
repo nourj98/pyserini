@@ -16,7 +16,6 @@
 
 import argparse
 import importlib.resources
-import math
 import os
 import sys
 import time
@@ -25,8 +24,16 @@ from datetime import datetime, timezone
 from string import Template
 
 import yaml
+from pyserini.util import run_command
 
-from ._base import fail_str, ok_str, okish_str, run_eval_and_return_metric
+from ._base import (
+    compare_reproduction_score,
+    format_eval_command,
+    format_reproduction_status,
+    format_run_command,
+    read_file,
+    run_eval_and_return_metric,
+)
 
 dense_threads = 16
 dense_batch_size = 512
@@ -38,25 +45,6 @@ trec_eval_metric_definitions = {
     'S@10': '-c -m success.10',
 }
 
-
-def format_run_command(raw):
-    return (
-        raw.replace("--topics", "\\\n  --topics")
-        .replace('--encoder', '\\\n  --encoder')
-        .replace("--index", "\\\n  --index")
-        .replace("--output-format", "\\\n  --output-format")
-        .replace("--output ", "\\\n  --output ")
-        .replace("--hits", "\\\n  --hits")
-    )
-
-def format_eval_command(raw):
-    return raw.replace("-c ", "\\\n  -c ").replace("run.", "\\\n  run.")
-
-def read_file(f):
-    fin = open(importlib.resources.files("pyserini.2cr") / f, "r")
-    text = fin.read()
-    fin.close()
-    return text
 
 def list_conditions():  
     with importlib.resources.files('pyserini.2cr').joinpath('m_beir.yaml').open('r') as f:  
@@ -70,9 +58,9 @@ def print_results_by_metric_position(table, position, metric_name):
     conditions = ['clip-sf-large', 'blip-ff-large']
     for condition in conditions:
         print(f'{condition:15}', end='')
-    print('')
+    print()
 
-    for dataset in table.keys():
+    for dataset in table:
         print(f'{dataset:30}', end='')
         metric_list = list(trec_eval_metric_definitions.keys())
 
@@ -84,8 +72,8 @@ def print_results_by_metric_position(table, position, metric_name):
             else:
                 score = 0.0
             print(f'{score:8.4f}' + ' ' * 7, end='')
-        print('')
-    print('')
+        print()
+    print()
 
 def run_conditions(args):  
     start = time.time()  
@@ -125,9 +113,9 @@ def run_conditions(args):
                         if args.display_commands:  
                             print(f'\n```bash\n{format_run_command(cmd)}\n```\n')  
                           
-                        if not os.path.exists(runfile):  
-                            if not args.dry_run:  
-                                os.system(cmd)  
+                        if not os.path.exists(runfile):
+                            if not args.dry_run:
+                                run_command(cmd, capture_output=False)
                           
                         for expected in sub['scores']:  
                             for metric in expected:  
@@ -138,12 +126,9 @@ def run_conditions(args):
                                     score = float(run_eval_and_return_metric(metric, 'm-beir-' + sub_dataset.replace('_', '-'),
                                         trec_eval_metric_definitions[metric], runfile, display_command=args.display_commands))
 
-                                    if math.isclose(score, float(expected[metric])):  
-                                        result = ok_str  
-                                    elif abs(score - float(expected[metric])) <= 0.0005 or score > float(expected[metric]):  
-                                        result = okish_str + f' expected {expected[metric]:.4f}'  
-                                    else:  
-                                        result = fail_str + f' expected {expected[metric]:.4f}'  
+                                    expected_score = float(expected[metric])
+                                    status = compare_reproduction_score(score, expected_score)
+                                    result = format_reproduction_status(status, expected_score)
                                     print(f'        {metric:7}: {score:.4f} {result}')  
                                     table[f'{dataset}_{sub_dataset}'][name][metric] = score  
                                 else:  
@@ -155,9 +140,9 @@ def run_conditions(args):
                     if args.display_commands:  
                         print(f'\n```bash\n{format_run_command(cmd)}\n```\n')  
                           
-                    if not os.path.exists(runfile):  
-                        if not args.dry_run:  
-                            os.system(cmd)  
+                    if not os.path.exists(runfile):
+                        if not args.dry_run:
+                            run_command(cmd, capture_output=False)
                               
                     for expected in datasets['scores']:  
                         for metric in expected:  
@@ -168,19 +153,16 @@ def run_conditions(args):
                                 score = float(run_eval_and_return_metric(metric, 'm-beir-' + dataset.replace('_', '-'),
                                     trec_eval_metric_definitions[metric], runfile, display_command=args.display_commands))
 
-                                if math.isclose(score, float(expected[metric])):  
-                                    result = ok_str  
-                                elif abs(score - float(expected[metric])) <= 0.0005 or score > float(expected[metric]):  
-                                    result = okish_str + f' expected {expected[metric]:.4f}'  
-                                else:  
-                                    result = fail_str + f' expected {expected[metric]:.4f}'  
+                                expected_score = float(expected[metric])
+                                status = compare_reproduction_score(score, expected_score)
+                                result = format_reproduction_status(status, expected_score)
                                 print(f'      {metric:7}: {score:.4f} {result}')  
                                 table[dataset][name][metric] = score  
                             else:  
                                 table[dataset][name][metric] = expected[metric]  
-                print('')  
+                print()
                               
-            print('')  
+            print()
     
     print_results_by_metric_position(table, 0, 'R@5')
     print_results_by_metric_position(table, 1, 'R@10')
@@ -246,7 +228,7 @@ def generate_report(args):
     html_rows = []    
     row_cnt = 1    
         
-    for dataset in table.keys():  
+    for dataset in table:
         # Get dataset-specific metrics to determine the order  
         metric_names = list(trec_eval_metric_definitions.keys())  
           
@@ -275,31 +257,22 @@ def generate_report(args):
         
     all_rows = '\n'.join(html_rows)    
     with open(args.output, 'w') as out:    
-        out.write(Template(html_template).substitute(title='M-BEIR Datasets Regressions', rows=all_rows))
+        out.write(Template(html_template).substitute(title='Pyserini: M-BEIR', rows=all_rows))
 
 
 if __name__ == '__main__':  
-    parser = argparse.ArgumentParser(description='Generate regression matrix for UniIR datasets.')  
+    parser = argparse.ArgumentParser(description='Generate regression matrix for UniIR datasets.')
       
-    parser.add_argument('--list-conditions', action='store_true', default=False,   
-                        help='List available conditions.')  
-      
-    parser.add_argument('--generate-report', action='store_true', default=False,   
-                        help='Generate report.')  
-    parser.add_argument('--output', type=str, help='File to store report.', required=False)  
-      
-    parser.add_argument('--all', action='store_true', default=False,   
-                        help='Run all conditions.')  
-    parser.add_argument('--condition', type=str, help='Condition to run.', required=False)  
-    parser.add_argument('--dataset', type=str, help='Dataset to run.', required=False)  
-    parser.add_argument('--directory', type=str, help='Base directory.', default='', required=False)  
-      
-    parser.add_argument('--dry-run', action='store_true', default=False,   
-                        help='Print out commands but do not execute.')  
-    parser.add_argument('--skip-eval', action='store_true', default=False,   
-                        help='Skip running trec_eval.')  
-    parser.add_argument('--display-commands', action='store_true', default=False,   
-                        help='Display command.')  
+    parser.add_argument('--list-conditions', action='store_true', default=False, help='List available conditions.')
+    parser.add_argument('--generate-report', action='store_true', default=False, help='Generate report.')
+    parser.add_argument('--output', type=str, help='File to store report.', required=False)
+    parser.add_argument('--all', action='store_true', default=False, help='Run all conditions.')
+    parser.add_argument('--condition', type=str, help='Condition to run.', required=False)
+    parser.add_argument('--dataset', type=str, help='Dataset to run.', required=False)
+    parser.add_argument('--directory', type=str, help='Base directory.', default='', required=False)
+    parser.add_argument('--dry-run', action='store_true', default=False, help='Print out commands but do not execute.')
+    parser.add_argument('--skip-eval', action='store_true', default=False, help='Skip running trec_eval.')
+    parser.add_argument('--display-commands', action='store_true', default=False, help='Display command.')
       
     args = parser.parse_args()  
   

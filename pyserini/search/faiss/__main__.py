@@ -34,10 +34,6 @@ from ._prf import (DenseVectorAncePrf, DenseVectorAveragePrf,
                    DenseVectorRocchioPrf)
 from ._searcher import BinaryDenseFaissSearcher, FaissSearcher
 
-# Fixes this error: "OMP: Error #15: Initializing libomp.a, but found libomp.dylib already initialized."
-# https://stackoverflow.com/questions/53014306/error-15-initializing-libiomp5-dylib-but-found-libiomp5-dylib-already-initial
-os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
-
 
 def define_dsearch_args(parser):
     parser.add_argument(
@@ -267,17 +263,6 @@ def init_query_encoder(
     explicit_truncate=False,
 ):
     device = resolve_device(device, backend='torch')
-    encoded_queries_map = {
-        "msmarco-passage-dev-subset": "tct_colbert-msmarco-passage-dev-subset",
-        "dpr-nq-dev": "dpr_multi-nq-dev",
-        "dpr-nq-test": "dpr_multi-nq-test",
-        "dpr-trivia-dev": "dpr_multi-trivia-dev",
-        "dpr-trivia-test": "dpr_multi-trivia-test",
-        "dpr-wq-test": "dpr_multi-wq-test",
-        "dpr-squad-test": "dpr_multi-squad-test",
-        "dpr-curated-test": "dpr_multi-curated-test",
-    }
-
     if encoder:
         _encoder_class = encoder_class
 
@@ -333,21 +318,12 @@ def init_query_encoder(
         return encoder_class(**kwargs)
 
     if encoded_queries:
-        if os.path.exists(encoded_queries):
-            if "bpr" in encoded_queries:
-                return BprQueryEncoder(encoded_query_dir=encoded_queries)
-            else:
-                return QueryEncoder(encoded_queries)
+        if "bpr" in encoded_queries:
+            return BprQueryEncoder.load_encoded_queries(encoded_queries)
         else:
-            if "bpr" in encoded_queries:
-                return BprQueryEncoder.load_encoded_queries(encoded_queries)
-            else:
-                return QueryEncoder.load_encoded_queries(encoded_queries)
+            return QueryEncoder.load_encoded_queries(encoded_queries)
 
-    if topics_name in encoded_queries_map:
-        return QueryEncoder.load_encoded_queries(encoded_queries_map[topics_name])
-
-    raise ValueError(f"No encoded queries for topic {topics_name}")
+    raise ValueError(f"No encoder or encoded queries specified for topic {topics_name}")
 
 
 if __name__ == "__main__":

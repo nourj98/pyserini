@@ -17,11 +17,12 @@
 import argparse
 import json
 import os
+import sys
 
 from tqdm import tqdm
 
-from pyserini.eval.evaluate_dpr_retrieval import has_answers, SimpleTokenizer
-from pyserini.search import get_topics, get_topics_with_reader
+from pyserini.eval.evaluate_dpr_retrieval import SimpleTokenizer, has_answers
+from pyserini.search import get_topics, load_topics_from_file
 from pyserini.search.lucene import LuceneSearcher
 
 if __name__ == '__main__':
@@ -38,7 +39,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.topics_file:
-        qas = get_topics_with_reader(args.topics_reader, args.topics_file)
+        qas = load_topics_from_file(args.topics_file, args.topics_reader)
     elif args.topics:
         qas = get_topics(args.topics)
     else:
@@ -49,7 +50,7 @@ if __name__ == '__main__':
     else:
         searcher = LuceneSearcher.from_prebuilt_index(args.index)
     if not searcher:
-        exit()
+        sys.exit()
 
     retrieval = {}
     tokenizer = SimpleTokenizer()
@@ -79,8 +80,7 @@ if __name__ == '__main__':
                      'has_answer': answer_exist}
                 )
             else:
-                retrieval[question_id]['contexts'].append(
-                    {'docid': doc_id, 'score': score, 'has_answer': answer_exist}
-                )
+                retrieval[question_id]['contexts'].append({'docid': doc_id, 'score': score, 'has_answer': answer_exist})
 
-    json.dump(retrieval, open(args.output, 'w'), indent=4, ensure_ascii=False)
+    with open(args.output, 'w') as f_out:
+        json.dump(retrieval, f_out, indent=4, ensure_ascii=False)

@@ -59,6 +59,12 @@ class BaseClipEncoder:
         """Apply L2 normalization to embeddings if required."""
         return normalize(embeddings, axis=1, norm='l2') if self.l2_norm else embeddings
 
+    def features_to_numpy(self, features):
+        """Extract tensor outputs from CLIP features across transformers versions."""
+        if hasattr(features, 'pooler_output'):
+            features = features.pooler_output
+        return features.detach().cpu().numpy()
+
 
 class ClipImageEncoder(BaseClipEncoder):
     """Encodes images using a CLIP model."""
@@ -80,7 +86,7 @@ class ClipImageEncoder(BaseClipEncoder):
         with torch.no_grad():
             image_features = self.model.get_image_features(**inputs)
 
-        embeddings = image_features.detach().cpu().numpy()
+        embeddings = self.features_to_numpy(image_features)
         return self.normalize_embeddings(embeddings)
 
 
@@ -109,7 +115,7 @@ class ClipTextEncoder(BaseClipEncoder):
         with torch.no_grad():
             text_features = self.model.get_text_features(**inputs)
 
-        embeddings = text_features.detach().cpu().numpy()
+        embeddings = self.features_to_numpy(text_features)
         return self.normalize_embeddings(embeddings)
     
     
@@ -136,15 +142,15 @@ class ClipEncoder(QueryEncoder):
 class ClipQueryEncoder(QueryEncoder):
     """Encodes queries using a CLIP model, supporting both images and texts."""
 
-    def __init__(self, encoder_dir: str = None, encoded_query_dir: str = None, device: str = 'cuda:0',
+    def __init__(self, encoder_dir: str = None, encoded_queries_dir: str = None, device: str = 'cuda:0',
                  l2_norm: bool = False, prefix: str = None, multimodal: bool = False, **kwargs):
-        super().__init__(encoded_query_dir)
+        super().__init__(encoded_queries_dir)
         if encoder_dir:
             self.device = device
             self.encoder = ClipEncoder(encoder_dir, device, l2_norm, prefix, multimodal)
             self.has_model = True
 
-        if not self.has_model and not self.has_encoded_query:
+        if not self.has_model and not self.has_encoded_queries:
             raise Exception('Neither query encoder model nor encoded queries provided. Please provide at least one')
 
     def encode(self, query: str):

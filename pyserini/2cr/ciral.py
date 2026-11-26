@@ -16,23 +16,30 @@
 
 import argparse
 import importlib.resources
-import math
 import os
 import sys
 import time
-from collections import defaultdict, OrderedDict
-from datetime import datetime, timezone
+from collections import OrderedDict, defaultdict
+from datetime import UTC, datetime
 from string import Template
 
 import yaml
+from pyserini.util import run_command
 
-from ._base import run_eval_and_return_metric, ok_str, fail_str
+from ._base import (
+    compare_reproduction_score,
+    format_eval_command,
+    format_reproduction_status,
+    format_run_command,
+    read_file,
+    run_eval_and_return_metric,
+)
 
 dense_threads = 16
 dense_batch_size = 512
 sparse_threads = 16
 sparse_batch_size = 128
-fusion_tag="rrf-afridpr-bmdt"
+fusion_tag='rrf-afridpr-bmdt'
 
 languages = [
     ['ha', 'hausa'],
@@ -63,34 +70,9 @@ trec_eval_metric_definitions = {
 }
 
 
-def format_run_command(raw):
-    return raw.replace('--lang', '\\\n  --lang') \
-        .replace('--encoder', '\\\n  --encoder') \
-        .replace('--topics', '\\\n  --topics') \
-        .replace('--index', '\\\n  --index') \
-        .replace('--output ', '\\\n  --output ') \
-        .replace('--runs', '\\\n  --runs ') \
-        .replace('--runtag', '\\\n  --runtag ') \
-        .replace('--batch ', '\\\n  --batch ') \
-        .replace('--threads 12', '--threads 12 \\\n ')
-
-
-def format_eval_command(raw):
-    return raw.replace('-c ', '\\\n  -c ') \
-        .replace(raw.split()[-1], f'\\\n  {raw.split()[-1]}')
-
-
-def read_file(f):
-    fin = open(importlib.resources.files("pyserini.2cr")/f, 'r')
-    text = fin.read()
-    fin.close()
-
-    return text
-
-
 def list_conditions():
     print('Conditions:\n-----------')
-    for condition, _ in html_display.items():
+    for condition in html_display:
         print(condition)
     print('\nLanguages\n---------')
     for language in languages:
@@ -102,14 +84,17 @@ def print_results(table, metric, split):
     print(' ' * 32, end='')
     for lang in languages:
         print(f' {lang[1]:4}   ', end='')
-    print('')
+
+    print()
+
     for model in models:
         print(f'{model:32}', end='')
         for lang in languages:
             key = f'{model}.{lang[0]}'
             print(f'{table[key][split][metric]:7.4f}', end='   ')
-        print('')
-    print('')
+        print()
+
+    print()
 
 
 def generate_table_rows(table, row_template, commands, eval_commands, table_id, split, metric):
@@ -184,16 +169,23 @@ def generate_report(args):
 
             runfile = os.path.join(args.directory, f'run.ciral.{name}.{display_split}.txt')
             if is_fusion:
-                bm25_dt_output = os.path.join(args.directory,
-                                            f'run.ciral.bm25-dt.{lang}.{display_split}.txt')
-                afriberta_dpr_output = os.path.join(args.directory,
-                                            f'run.ciral.afriberta-pft-msmarco-ft-mrtydi.{lang}.{display_split}.txt')
-                expected_args = dict(output=runfile, bm25_dt_output=bm25_dt_output, 
-                                     afriberta_dpr_output=afriberta_dpr_output, fusion_tag=fusion_tag)
+                bm25_dt_output = os.path.join(args.directory, f'run.ciral.bm25-dt.{lang}.{display_split}.txt')
+                afriberta_dpr_output = os.path.join(args.directory, f'run.ciral.afriberta-pft-msmarco-ft-mrtydi.{lang}.{display_split}.txt')
+                expected_args = {
+                    'output': runfile,
+                    'bm25_dt_output': bm25_dt_output,
+                    'afriberta_dpr_output': afriberta_dpr_output,
+                    'fusion_tag': fusion_tag
+                    }
             else:
-                expected_args = dict(split=display_split, output=runfile,
-                                     sparse_threads=sparse_threads, sparse_batch_size=sparse_batch_size,
-                                     dense_threads=dense_threads, dense_batch_size=dense_batch_size)
+                expected_args = {
+                    'split': display_split,
+                    'output': runfile,
+                    'sparse_threads': sparse_threads,
+                    'sparse_batch_size': sparse_batch_size,
+                    'dense_threads': dense_threads,
+                    'dense_batch_size': dense_batch_size
+                    }
 
             cmd = Template(cmd_template).substitute(**expected_args)
             commands[name] = format_run_command(cmd)
@@ -205,8 +197,7 @@ def generate_report(args):
                         for metric in scores:
                             table[name][display_split][metric] = scores[metric]
 
-                            eval_cmd = f'python -m pyserini.eval.trec_eval ' + \
-                                    f'{trec_eval_metric_definitions[metric]} {eval_key}-{display_split} {runfile}'
+                            eval_cmd = f'python -m pyserini.eval.trec_eval {trec_eval_metric_definitions[metric]} {eval_key}-{display_split} {runfile}'
                             eval_commands[name][metric] = format_eval_command(eval_cmd)
 
         tables_html = []
@@ -214,17 +205,15 @@ def generate_report(args):
         # Build the table for nDCG@20, dev queries
         html_rows = generate_table_rows(table, row_template, commands, eval_commands, 1, display_split, 'nDCG@20')
         all_rows = '\n'.join(html_rows)
-        tables_html.append(Template(table_template).substitute(desc=f'nDCG@20, {all_splits[display_split]}', 
-                                                               rows=all_rows))
+        tables_html.append(Template(table_template).substitute(desc=f'nDCG@20, {all_splits[display_split]}', rows=all_rows))
 
         # Build the table for R@100, dev queries
         html_rows = generate_table_rows(table, row_template, commands, eval_commands, 3, display_split, 'R@100')
         all_rows = '\n'.join(html_rows)
-        tables_html.append(Template(table_template).substitute(desc=f'Recall@100, {all_splits[display_split]}', 
-                                                               rows=all_rows))
+        tables_html.append(Template(table_template).substitute(desc=f'Recall@100, {all_splits[display_split]}', rows=all_rows))
 
     with open(args.output, 'w') as out:
-        out.write(Template(html_template).substitute(title='CIRAL', tables=' '.join(tables_html)))
+        out.write(Template(html_template).substitute(title='Pyserini: CIRAL', tables=' '.join(tables_html)))
 
 
 def run_conditions(args):
@@ -239,14 +228,12 @@ def run_conditions(args):
             encoder = name.split('.')[0]
             lang = name.split('.')[-1]
 
-            lang_name = [item[1] for item in languages 
-                         if item[0] == lang][0]
+            lang_name = next(item[1] for item in languages if item[0] == lang)
             if args.all:
                 pass
-            elif args.condition != encoder:
+            elif args.condition != encoder or args.language and args.language != lang_name:
                 continue
-            elif args.language and args.language != lang_name:
-                continue
+
             eval_key = condition['eval_key']
             cmd_template = condition['command']
 
@@ -268,8 +255,8 @@ def run_conditions(args):
                                                 f'run.ciral.bm25-dt.{lang}.{split}.txt')
                     afriberta_dpr_output = os.path.join(args.directory,
                                                 f'run.ciral.afriberta-pft-msmarco-ft-mrtydi.{lang}.{split}.txt')
-                    cmd = Template(cmd_template).substitute(split=test_split, output=runfile, 
-                                                            bm25_dt_output=bm25_dt_output, afriberta_dpr_output=afriberta_dpr_output, fusion_tag=fusion_tag)
+                    cmd = Template(cmd_template).substitute(split=test_split, output=runfile, bm25_dt_output=bm25_dt_output,
+                                                            afriberta_dpr_output=afriberta_dpr_output, fusion_tag=fusion_tag)
                 else:
                     cmd = Template(cmd_template).substitute(split=test_split, output=runfile,
                                         sparse_threads=sparse_threads, sparse_batch_size=sparse_batch_size,
@@ -278,9 +265,8 @@ def run_conditions(args):
                 if args.display_commands:
                         print(f'\n```bash\n{format_run_command(cmd)}\n```\n')
 
-                if not os.path.exists(runfile):
-                    if not args.dry_run:
-                        os.system(cmd)
+                if not os.path.exists(runfile) and not args.dry_run:
+                    run_command(cmd, capture_output=False)
 
                 for expected in splits['scores']:
                     for metric in expected:
@@ -291,24 +277,23 @@ def run_conditions(args):
                             score = float(run_eval_and_return_metric(metric, f'{eval_key}-{split}',
                                 trec_eval_metric_definitions[metric], runfile, display_command=args.display_commands))
 
-                            if math.isclose(score, float(expected[metric])):
-                                result_str = ok_str
-                            else:
-                                result_str = fail_str + f' expected {expected[metric]:.4f}'
+                            expected_score = float(expected[metric])
+                            status = compare_reproduction_score(score, expected_score)
+                            result_str = format_reproduction_status(status, expected_score)
                             print(f'      {metric:7}: {score:.4f} {result_str}')
                             table[name][split][metric] = score
                         else:
                             table[name][split][metric] = expected[metric]
 
-                print('')
+                print()
 
     for metric in ['nDCG@20', 'R@100']:
         for split in ['test-a', 'test-b']: # To add test later 
             print_results(table, metric, split)
 
     end = time.time()
-    start_str = datetime.fromtimestamp(start, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    end_str = datetime.fromtimestamp(end, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    start_str = datetime.fromtimestamp(start, tz=UTC).strftime('%Y-%m-%d %H:%M:%S')
+    end_str = datetime.fromtimestamp(end, tz=UTC).strftime('%Y-%m-%d %H:%M:%S')
 
     print('\n')
     print(f'Start time: {start_str}')
@@ -340,7 +325,7 @@ if __name__ == '__main__':
 
     if args.generate_report:
         if not args.output:
-            print(f'Must specify report filename with --output.')
+            print('Must specify report filename with --output.')
             sys.exit()
 
         generate_report(args)

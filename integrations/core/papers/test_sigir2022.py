@@ -17,7 +17,6 @@
 """Integration tests for commands in Ma et al. resource paper and Trotman et al. demo paper at SIGIR 2022."""
 
 import multiprocessing
-import os
 import unittest
 
 from integrations.utils import clean_files, run_command, parse_score, parse_score_msmarco
@@ -47,12 +46,13 @@ class TestSIGIR2022(unittest.TestCase):
                       --output {output_file} \
                       --output-format msmarco \
                       --bm25'
-        status = os.system(run_cmd)
-        self.assertEqual(status, 0)
+        result = run_command(run_cmd)
+        self.assertEqual(result.returncode, 0)
 
         eval_cmd = f'python -m pyserini.eval.msmarco_passage_eval \
                        msmarco-passage-dev-subset {output_file}'
-        stdout, stderr = run_command(eval_cmd)
+        result = run_command(eval_cmd)
+        stdout, stderr = result.stdout, result.stderr
         score = parse_score_msmarco(stdout, "MRR @10")
         self.assertAlmostEqual(score, 0.2816, delta=0.0001)
         # Note that this is the score with (k1=2.18, b=0.86); score is 0.2723 with default (k1=0.9, b=0.4) parameters.
@@ -70,11 +70,12 @@ class TestSIGIR2022(unittest.TestCase):
                       --batch {self.batch_size} --threads {self.threads} \
                       --hits 1000 \
                       --impact'
-        status = os.system(run_cmd)
-        self.assertEqual(status, 0)
+        result = run_command(run_cmd)
+        self.assertEqual(result.returncode, 0)
 
         eval_cmd = f'python -m pyserini.eval.trec_eval -c -M 100 -m map -m recip_rank msmarco-v2-passage-dev {output_file}'
-        stdout, stderr = run_command(eval_cmd)
+        result = run_command(eval_cmd)
+        stdout, stderr = result.stdout, result.stderr
         score = parse_score(stdout, "recip_rank")
         self.assertAlmostEqual(score, 0.1499, delta=0.0001)
 
@@ -91,11 +92,12 @@ class TestSIGIR2022(unittest.TestCase):
                       --batch {self.batch_size} --threads {self.threads} \
                       --hits 1000 \
                       --impact'
-        status = os.system(run_cmd)
-        self.assertEqual(status, 0)
+        result = run_command(run_cmd)
+        self.assertEqual(result.returncode, 0)
 
         eval_cmd = f'python -m pyserini.eval.msmarco_passage_eval msmarco-passage-dev-subset {output_file}'
-        stdout, stderr = run_command(eval_cmd)
+        result = run_command(eval_cmd)
+        stdout, stderr = result.stdout, result.stderr
         score = parse_score_msmarco(stdout, "MRR @10", digits=3)
         self.assertAlmostEqual(score, 0.352, delta=0.0005)
 

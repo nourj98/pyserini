@@ -13,23 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
-
 import torch
-from transformers import (BertModel, BertTokenizerFast)
+from transformers import BertModel
 
-from pyserini.encode import QueryEncoder
+from pyserini.encode._base import QueryEncoder, load_bert_tokenizer
 
 
 class DkrrDprQueryEncoder(QueryEncoder):
-    def __init__(self, encoder_dir: str = None, encoded_query_dir: str = None, device: str = 'cpu',
-                 prefix: str = "question:", **kwargs):
-        super().__init__(encoded_query_dir)
+    def __init__(self, encoder_dir: str = None, encoded_queries_dir: str = None, device: str = 'cpu', prefix: str = 'question:', **kwargs):
+        super().__init__(encoded_queries_dir)
         self.device = device
         self.model = BertModel.from_pretrained(encoder_dir)
         self.model.to(self.device)
-        self.tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased',
-                                                           clean_up_tokenization_spaces=True)
+        self.tokenizer = load_bert_tokenizer('bert-base-uncased', clean_up_tokenization_spaces=True)
         self.has_model = True
         self.prefix = prefix
 
@@ -43,10 +39,9 @@ class DkrrDprQueryEncoder(QueryEncoder):
         if self.has_model:
             if self.prefix:
                 query = f'{self.prefix} {query}'
-            inputs = self.tokenizer(query, return_tensors='pt', max_length=40, padding="max_length")
+            inputs = self.tokenizer(query, return_tensors='pt', max_length=40, padding='max_length')
             inputs.to(self.device)
-            outputs = self.model(input_ids=inputs["input_ids"],
-                                 attention_mask=inputs["attention_mask"])
+            outputs = self.model(input_ids=inputs['input_ids'], attention_mask=inputs['attention_mask'])
             embeddings = self._mean_pooling(outputs, inputs['attention_mask']).detach().cpu().numpy()
             return embeddings.flatten()
         else:

@@ -16,7 +16,6 @@
 
 import argparse
 import importlib.resources
-import math
 import os
 import sys
 import time
@@ -25,8 +24,16 @@ from datetime import datetime, timezone
 from string import Template
 
 import yaml
+from pyserini.util import run_command
 
-from ._base import fail_str, ok_str, okish_str, run_eval_and_return_metric
+from ._base import (
+    compare_reproduction_score,
+    format_eval_command,
+    format_reproduction_status,
+    format_run_command,
+    read_file,
+    run_eval_and_return_metric,
+)
 
 dense_threads = 16
 dense_batch_size = 512
@@ -39,32 +46,11 @@ trec_eval_metric_definitions = {
 }
 
 
-def format_run_command(raw):
-    return (
-        raw.replace("--topics", "\\\n  --topics")
-        .replace('--encoder', '\\\n  --encoder')
-        .replace("--index", "\\\n  --index")
-        .replace("--output-format", "\\\n  --output-format")
-        .replace("--output ", "\\\n  --output ")
-        .replace("--fp16 ", "\\\n  --fp16 ")
-        .replace("--hits", "\\\n  --hits")
-    )
-
-def format_eval_command(raw):
-    return raw.replace("-c ", "\\\n  -c ").replace("run.", "\\\n  run.")
-
-
 def print_command_block(cmd):
     print('```bash')
     print(format_run_command(cmd))
     print('```')
     print()
-
-def read_file(f):
-    fin = open(importlib.resources.files("pyserini.2cr") / f, "r")
-    text = fin.read()
-    fin.close()
-    return text
 
 def list_conditions():  
     with importlib.resources.files('pyserini.2cr').joinpath('mmeb.yaml').open('r') as f:  
@@ -136,7 +122,7 @@ def run_conditions(args):
                       
                 if not os.path.exists(runfile):  
                     if not args.dry_run:  
-                        os.system(cmd)  
+                        run_command(cmd, capture_output=False)
                           
                 for expected in datasets['scores']:  
                     for metric in expected:  
@@ -148,12 +134,9 @@ def run_conditions(args):
                             score = float(run_eval_and_return_metric(metric, qrels_name,
                                 trec_eval_metric_definitions[metric], runfile, display_command=args.display_commands))
                                   
-                            if math.isclose(score, float(expected[metric])):  
-                                result = ok_str  
-                            elif abs(score - float(expected[metric])) <= 0.0005 or score > float(expected[metric]):
-                                result = okish_str + f' expected {expected[metric]:.4f}'  
-                            else:  
-                                result = fail_str + f' expected {expected[metric]:.4f}'  
+                            expected_score = float(expected[metric])
+                            status = compare_reproduction_score(score, expected_score)
+                            result = format_reproduction_status(status, expected_score)
                             print(f'      {metric:7}: {score:.4f} {result}')  
                               
                             table[dataset][name][metric] = score  
@@ -240,7 +223,7 @@ def generate_report(args):
         
     all_rows = '\n'.join(html_rows)    
     with open(args.output, 'w') as out:    
-        out.write(Template(html_template).substitute(title='MMEB Visual Document Datasets Regressions', rows=all_rows))
+        out.write(Template(html_template).substitute(title='Pyserini: MMEB', rows=all_rows))
 
 
 if __name__ == '__main__':  
@@ -288,4 +271,3 @@ if __name__ == '__main__':
         sys.exit()  
   
     run_conditions(args)
-

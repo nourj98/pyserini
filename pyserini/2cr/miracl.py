@@ -16,18 +16,24 @@
 
 import argparse
 import importlib.resources
-import math
 import os
-import subprocess
 import sys
 import time
-from collections import defaultdict, OrderedDict
-from datetime import datetime, timezone
+from collections import OrderedDict, defaultdict
+from datetime import UTC, datetime
 from string import Template
 
 import yaml
+from pyserini.util import run_command
 
-from ._base import run_eval_and_return_metric, ok_str, okish_str, fail_str
+from ._base import (
+    compare_reproduction_score,
+    format_eval_command,
+    format_reproduction_status,
+    format_run_command,
+    read_file,
+    run_eval_and_return_metric,
+)
 
 dense_threads = 16
 dense_batch_size = 512
@@ -71,33 +77,9 @@ trec_eval_metric_definitions = {
 }
 
 
-def format_run_command(raw):
-    return raw.replace('--lang', '\\\n  --lang') \
-        .replace('--encoder', '\\\n  --encoder') \
-        .replace('--topics', '\\\n  --topics') \
-        .replace('--index', '\\\n  --index') \
-        .replace('--output ', '\\\n  --output ') \
-        .replace('--runs', '\\\n  --runs ') \
-        .replace('--threads ', '\\\n  --threads ') \
-        .replace('--bm25 ', '\\\n  --bm25 ')
-
-
-def format_eval_command(raw):
-    return raw.replace('-c ', '\\\n  -c ') \
-        .replace(raw.split()[-1], f'\\\n  {raw.split()[-1]}')
-
-
-def read_file(f):
-    fin = open(importlib.resources.files("pyserini.2cr")/f, 'r')
-    text = fin.read()
-    fin.close()
-
-    return text
-
-
 def list_conditions():
     print('Conditions:\n-----------')
-    for condition, _ in html_display.items():
+    for condition in html_display:
         print(condition)
     print('\nLanguages\n---------')
     for language in languages:
@@ -208,14 +190,17 @@ def print_results(table, metric, split):
     print(' ' * 35, end='')
     for lang in languages:
         print(f'{lang[0]:3}    ', end='')
-    print('')
+
+    print()
+
     for model in models:
         print(f'{model:33}', end='')
         for lang in languages:
             key = f'{model}.{lang[0]}'
             print(f'{table[key][split][metric]:7.3f}', end='')
-        print('')
-    print('')
+        print()
+
+    print()
 
 
 def extract_topic_fn_from_cmd(cmd):
@@ -252,10 +237,8 @@ def generate_report(args):
 
                 runfile = os.path.join(args.directory, f'run.miracl.{name}.{split}.txt')
                 if is_hybrid_run:
-                    bm25_output = os.path.join(args.directory,
-                                               f'run.miracl.bm25.{lang}.{split}.top{hits}.txt')
-                    mdpr_output = os.path.join(args.directory,
-                                               f'run.miracl.mdpr-tied-pft-msmarco.{lang}.{split}.top{hits}.txt')
+                    bm25_output = os.path.join(args.directory, f'run.miracl.bm25.{lang}.{split}.top{hits}.txt')
+                    mdpr_output = os.path.join(args.directory, f'run.miracl.mdpr-tied-pft-msmarco.{lang}.{split}.top{hits}.txt')
                     expected_args = dict(output=runfile, bm25_output=bm25_output, mdpr_output=mdpr_output)
                 else:
                     expected_args = dict(split=split, output=runfile,
@@ -274,8 +257,7 @@ def generate_report(args):
                             expected[metric] += 1e-5
                         table[name][split][metric] = expected[metric]
 
-                        eval_cmd = f'python -m pyserini.eval.trec_eval ' + \
-                                   f'{trec_eval_metric_definitions[metric]} {eval_key}-{split} {runfile}'
+                        eval_cmd = f'python -m pyserini.eval.trec_eval {trec_eval_metric_definitions[metric]} {eval_key}-{split} {runfile}'
                         eval_commands[name][metric] = format_eval_command(eval_cmd)
 
         tables_html = []
@@ -293,7 +275,7 @@ def generate_report(args):
         tables_html.append(Template(table_template).substitute(desc=f'Recall@100, {split}&nbsp;queries', rows=all_rows))
 
     with open(args.output, 'w') as out:
-        out.write(Template(html_template).substitute(title='MIRACL', tables=' '.join(tables_html)))
+        out.write(Template(html_template).substitute(title='Pyserini: MIRACL', tables=' '.join(tables_html)))
 
 
 def run_conditions(args):
@@ -313,9 +295,7 @@ def run_conditions(args):
             lang = name.split('.')[-1]
             if args.all:
                 pass
-            elif args.condition != encoder:
-                continue
-            elif args.language and args.language != lang:
+            elif args.condition != encoder or args.language and args.language != lang:
                 continue
             eval_key = condition['eval_key']
             cmd_template = condition['command']
@@ -335,10 +315,8 @@ def run_conditions(args):
 
                 runfile = os.path.join(args.directory, f'run.miracl.{name}.{split}.top{hits}.txt')
                 if is_hybrid_run:
-                    bm25_output = os.path.join(args.directory,
-                                               f'run.miracl.bm25.{lang}.{split}.top{hits}.txt')
-                    mdpr_output = os.path.join(args.directory,
-                                               f'run.miracl.mdpr-tied-pft-msmarco.{lang}.{split}.top{hits}.txt')
+                    bm25_output = os.path.join(args.directory, f'run.miracl.bm25.{lang}.{split}.top{hits}.txt')
+                    mdpr_output = os.path.join(args.directory, f'run.miracl.mdpr-tied-pft-msmarco.{lang}.{split}.top{hits}.txt')
                     if not os.path.exists(bm25_output):
                         print(f'Missing BM25 file: {bm25_output}')
                         continue
@@ -352,64 +330,45 @@ def run_conditions(args):
                                                             sparse_threads=sparse_threads, sparse_batch_size=sparse_batch_size,
                                                             dense_threads=dense_threads, dense_batch_size=dense_batch_size)
 
-                # In the yaml file, the topics are written as something like '--topics miracl-v1.0-ar-${split}'
-                # This works for the dev split because the topics are directly included in Anserini/Pyserini.
-                # For this training split, we have to map the symbol into a file in tools/topics-and-qrels/
-                # Here, we assume that the developer has cloned the miracl repo and placed the topics there.
-                if split == 'train':
-                    cmd = cmd.replace(f'--topics miracl-v1.0-{lang}-{split}',
-                                      f'--topics tools/topics-and-qrels/topics.miracl-v1.0-{lang}-{split}.tsv')
-
                 if args.display_commands:
                     print(f'\n```bash\n{format_run_command(cmd)}\n```\n')
 
-                if not os.path.exists(runfile):
-                    if not args.dry_run:
-                        rtn = subprocess.run(cmd.split(), capture_output=True)
-                        stderr = rtn.stderr.decode()
-                        if '--topics' in cmd:
-                            topic_fn = extract_topic_fn_from_cmd(cmd)
-                            if f'ValueError: Topic {topic_fn} Not Found' in stderr:
-                                print(f'Skipping {topic_fn}: file not found.')
-                                continue
+                if not os.path.exists(runfile) and not args.dry_run:
+                    result = run_command(cmd)
+                    stderr = result.stderr
+                    if '--topics' in cmd:
+                        topic_fn = extract_topic_fn_from_cmd(cmd)
+                        if f'ValueError: Topic {topic_fn} Not Found' in stderr:
+                            print(f'Skipping {topic_fn}: file not found.')
+                            continue
 
                 for expected in splits['scores']:
                     for metric in expected:
                         if not args.skip_eval:
-                            # We have to translate the training qrels into a file located in tools/topics-and-qrels/
-                            # because they are not included with Anserini/Pyserini by default.
-                            # Here, we assume that the developer has cloned the miracl repo and placed the qrels there.
                             if not os.path.exists(runfile):
                                 continue
-                            if split == 'train':
-                                qrels = f'tools/topics-and-qrels/qrels.{eval_key}-train.tsv'
-                            else:
-                                qrels = f'{eval_key}-{split}'
+                            qrels = f'{eval_key}-{split}'
 
                             score = float(run_eval_and_return_metric(metric, qrels,
                                 trec_eval_metric_definitions[metric], runfile, display_command=args.display_commands))
 
-                            if math.isclose(score, float(expected[metric])):
-                                result_str = ok_str
-                            # If results are within 0.0005, just call it "OKish".
-                            elif math.isclose(score, float(expected[metric]), abs_tol=5e-4):
-                                result_str = okish_str + f' expected {expected[metric]:.4f}'
-                            else:
-                                result_str = fail_str + f' expected {expected[metric]:.4f}'
+                            expected_score = float(expected[metric])
+                            status = compare_reproduction_score(score, expected_score)
+                            result_str = format_reproduction_status(status, expected_score)
                             print(f'      {metric:7}: {score:.4f} {result_str}')
                             table[name][split][metric] = score
                         else:
                             table[name][split][metric] = expected[metric]
 
-            print('')
+            print()
 
     for metric in ['nDCG@10', 'R@100']:
         for split in ['dev', 'train']:
             print_results(table, metric, split)
 
     end = time.time()
-    start_str = datetime.fromtimestamp(start, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    end_str = datetime.fromtimestamp(end, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    start_str = datetime.fromtimestamp(start, tz=UTC).strftime('%Y-%m-%d %H:%M:%S')
+    end_str = datetime.fromtimestamp(end, tz=UTC).strftime('%Y-%m-%d %H:%M:%S')
 
     print('\n')
     print(f'Start time: {start_str}')
@@ -440,7 +399,7 @@ if __name__ == '__main__':
 
     if args.generate_report:
         if not args.output:
-            print(f'Must specify report filename with --output.')
+            print('Must specify report filename with --output.')
             sys.exit()
 
         generate_report(args)

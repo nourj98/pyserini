@@ -16,17 +16,24 @@
 
 import argparse
 import importlib.resources
-import math
 import os
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from string import Template
 
 import yaml
+from pyserini.util import run_command
 
-from ._base import run_eval_and_return_metric, ok_str, okish_str, fail_str
+from ._base import (
+    compare_reproduction_score,
+    format_eval_command,
+    format_reproduction_status,
+    format_run_command,
+    read_file,
+    run_eval_and_return_metric,
+)
 
 dense_threads = 16
 dense_batch_size = 512
@@ -63,28 +70,6 @@ trec_eval_metric_definitions = {
 }
 
 
-def format_run_command(raw):
-    return raw.replace('--lang', '\\\n  --lang') \
-        .replace('--encoder', '\\\n  --encoder') \
-        .replace('--topics', '\\\n  --topics') \
-        .replace('--index', '\\\n  --index') \
-        .replace('--output ', '\\\n  --output ') \
-        .replace('--threads ', '\\\n  --threads ')
-
-
-def format_eval_command(raw):
-    return raw.replace('-c ', '\\\n  -c ') \
-        .replace(raw.split()[-1], f'\\\n  {raw.split()[-1]}')
-
-
-def read_file(f):
-    fin = open(importlib.resources.files("pyserini.2cr")/f, 'r')
-    text = fin.read()
-    fin.close()
-
-    return text
-
-
 def list_conditions():
     print('Conditions:\n-----------')
     for condition in models:
@@ -99,14 +84,17 @@ def print_results(table, metric, split):
     print(' ' * 32, end='')
     for lang in languages:
         print(f'{lang[0]:3}    ', end='')
-    print('')
+
+    print()
+
     for model in models:
         print(f'{model:30}', end='')
         for lang in languages:
             key = f'{model}.{lang[0]}'
             print(f'{table[key][split][metric]:7.3f}', end='')
-        print('')
-    print('')
+        print()
+
+    print()
 
 
 def generate_table_rows(table, row_template, commands, eval_commands, table_id, split, metric):
@@ -206,8 +194,7 @@ def generate_report(args):
                     for metric in expected:
                         table[name][split][metric] = expected[metric]
 
-                        eval_cmd = f'python -m pyserini.eval.trec_eval ' + \
-                                   f'{trec_eval_metric_definitions[metric]} {eval_key}-{split} {runfile}'
+                        eval_cmd = f'python -m pyserini.eval.trec_eval {trec_eval_metric_definitions[metric]} {eval_key}-{split} {runfile}'
                         eval_commands[name][metric] = format_eval_command(eval_cmd)
 
         tables_html = []
@@ -223,7 +210,7 @@ def generate_report(args):
         tables_html.append(Template(table_template).substitute(desc='Recall@100, test queries', rows=all_rows))
 
     with open(args.output, 'w') as out:
-        out.write(Template(html_template).substitute(title='Mr.TyDi', tables=' '.join(tables_html)))
+        out.write(Template(html_template).substitute(title='Pyserini: Mr.TyDi', tables=' '.join(tables_html)))
 
 
 def run_conditions(args):
@@ -239,9 +226,7 @@ def run_conditions(args):
             lang = name.split('.')[-1]
             if args.all:
                 pass
-            elif args.condition != encoder:
-                continue
-            elif args.language and args.language != lang:
+            elif args.condition != encoder or args.language and args.language != lang:
                 continue
             eval_key = condition['eval_key']
             cmd_template = condition['command']
@@ -261,9 +246,8 @@ def run_conditions(args):
                 if args.display_commands:
                     print(f'\n```bash\n{format_run_command(cmd)}\n```\n')
 
-                if not os.path.exists(runfile):
-                    if not args.dry_run:
-                        os.system(cmd)
+                if not os.path.exists(runfile) and not args.dry_run:
+                    run_command(cmd, capture_output=False)
 
                 for expected in splits['scores']:
                     for metric in expected:
@@ -274,27 +258,23 @@ def run_conditions(args):
                             score = float(run_eval_and_return_metric(metric, f'{eval_key}-{split}',
                                 trec_eval_metric_definitions[metric], runfile, display_command=args.display_commands))
 
-                            if math.isclose(score, float(expected[metric])):
-                                result_str = ok_str
-                            # If results are within 0.0005, just call it "OKish".
-                            elif math.isclose(score, float(expected[metric]), abs_tol=5e-4):
-                                result_str = okish_str + f' expected {expected[metric]:.4f}'
-                            else:
-                                result_str = fail_str + f' expected {expected[metric]:.4f}'
+                            expected_score = float(expected[metric])
+                            status = compare_reproduction_score(score, expected_score)
+                            result_str = format_reproduction_status(status, expected_score)
                             print(f'      {metric:7}: {score:.4f} {result_str}')
                             table[name][split][metric] = score
                         else:
                             table[name][split][metric] = expected[metric]
 
-            print('')
+            print()
 
     for metric in ['MRR@100', 'R@100']:
         for split in ['test', 'dev', 'train']:
             print_results(table, metric, split)
 
     end = time.time()
-    start_str = datetime.fromtimestamp(start, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    end_str = datetime.fromtimestamp(end, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    start_str = datetime.fromtimestamp(start, tz=UTC).strftime('%Y-%m-%d %H:%M:%S')
+    end_str = datetime.fromtimestamp(end, tz=UTC).strftime('%Y-%m-%d %H:%M:%S')
 
     print('\n')
     print(f'Start time: {start_str}')
@@ -304,8 +284,7 @@ def run_conditions(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate regression matrix for MIRACL.')
-    parser.add_argument('--condition', type=str,
-                        help='Condition to run', required=False)
+    parser.add_argument('--condition', type=str, help='Condition to run', required=False)
     # To list all conditions
     parser.add_argument('--list-conditions', action='store_true', default=False, help='List available conditions.')
     # For generating reports
@@ -326,7 +305,7 @@ if __name__ == '__main__':
 
     if args.generate_report:
         if not args.output:
-            print(f'Must specify report filename with --output.')
+            print('Must specify report filename with --output.')
             sys.exit()
 
         generate_report(args)

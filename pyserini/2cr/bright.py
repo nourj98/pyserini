@@ -16,17 +16,24 @@
 
 import argparse
 import importlib.resources
-import math
 import os
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from string import Template
 
 import yaml
+from pyserini.util import run_command
 
-from ._base import run_eval_and_return_metric, ok_str, okish_str, fail_str
+from ._base import (
+    compare_reproduction_score,
+    format_eval_command,
+    format_reproduction_status,
+    format_run_command,
+    read_file,
+    run_eval_and_return_metric,
+)
 
 metrics = ['nDCG@10', 'R@100', 'R@1000']
 
@@ -56,31 +63,6 @@ models = ['bm25',
           'bge-large-en-v1.5.flat',
           'diver-retriever-4b',
           'reason-embed-qwen3-4b-0928']
-
-
-def format_run_command(raw):
-    return raw.replace('--topics', '\\\n  --topics') \
-        .replace('--index', '\\\n  --index') \
-        .replace('--onnx-encoder', '\\\n  --onnx-encoder') \
-        .replace('--encoder-class ', '\\\n  --encoder-class ') \
-        .replace('--encoder ', '\\\n  --encoder ') \
-        .replace('--query-prefix ', '\\\n  --query-prefix ') \
-        .replace('--output ', '\\\n  --output ') \
-        .replace('--output-format trec ', '\\\n  --output-format trec ') \
-        .replace('--hits ', '\\\n  --hits ') \
-
-
-def format_eval_command(raw):
-    return raw.replace('-c ', '\\\n  -c ') \
-        .replace('run.', '\\\n  run.')
-
-
-def read_file(f):
-    fin = open(importlib.resources.files("pyserini.2cr")/f, 'r')
-    text = fin.read()
-    fin.close()
-
-    return text
 
 
 def list_conditions():
@@ -118,8 +100,7 @@ def generate_report(args):
 
                 for expected in datasets['scores']:
                     for metric in expected:
-                        eval_cmd = f'python -m pyserini.eval.trec_eval ' + \
-                                   f'{trec_eval_metric_definitions[metric]} bright-{dataset} {runfile}'
+                        eval_cmd = f'python -m pyserini.eval.trec_eval {trec_eval_metric_definitions[metric]} bright-{dataset} {runfile}'
                         eval_commands[dataset][name] += format_eval_command(eval_cmd) + '\n\n'
                         
                         table[dataset][name][metric] = expected[metric]
@@ -160,7 +141,7 @@ def generate_report(args):
             
         main_rows = '\n'.join(main_rows)
         with open(args.output, 'w') as out:
-            out.write(Template(html_template).substitute(title='Pyserini BRIGHT Regressions', main_rows=main_rows))
+            out.write(Template(html_template).substitute(title='Pyserini: BRIGHT', main_rows=main_rows))
 
 
 def run_conditions(args):
@@ -183,9 +164,7 @@ def run_conditions(args):
                 dataset = datasets['dataset']
                 if args.all:
                     pass
-                elif args.condition != name:
-                    continue
-                elif args.dataset and args.dataset != dataset:
+                elif args.condition != name or args.dataset and args.dataset != dataset:
                     continue
 
                 print(f'  - dataset: {dataset}')
@@ -197,9 +176,8 @@ def run_conditions(args):
                 if args.display_commands:
                     print(f'\n```bash\n{format_run_command(cmd)}\n```\n')
 
-                if not os.path.exists(runfile):
-                    if not args.dry_run:
-                        os.system(cmd)
+                if not os.path.exists(runfile) and not args.dry_run:
+                    run_command(cmd, capture_output=False)
 
                 for expected in datasets['scores']:
                     for metric in expected:
@@ -210,21 +188,17 @@ def run_conditions(args):
                             score = float(run_eval_and_return_metric(metric, f'bright-{dataset}',
                                 trec_eval_metric_definitions[metric], runfile, display_command=args.display_commands))
 
-                            if math.isclose(score, float(expected[metric])):
-                                result = ok_str
-                            # If results are within 0.005, just call it "OKish".
-                            elif abs(score - float(expected[metric])) <= 0.005:
-                                result = okish_str + f' expected {expected[metric]:.4f}'
-                            else:
-                                result = fail_str + f' expected {expected[metric]:.4f}'
+                            expected_score = float(expected[metric])
+                            status = compare_reproduction_score(score, expected_score)
+                            result = format_reproduction_status(status, expected_score)
                             print(f'      {metric:7}: {score:.4f} {result}')
 
                             table[dataset][name][metric] = score
                         else:
                             table[dataset][name][metric] = expected[metric]
-                    print('')
+                    print()
 
-            print('')
+            print()
 
     top_level_sums = defaultdict(lambda: defaultdict(float))
     final_scores = defaultdict(lambda: defaultdict(float))
@@ -263,8 +237,8 @@ def run_conditions(args):
     print('\n')
 
     end = time.time()
-    start_str = datetime.fromtimestamp(start, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    end_str = datetime.fromtimestamp(start, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    start_str = datetime.fromtimestamp(start, tz=UTC).strftime('%Y-%m-%d %H:%M:%S')
+    end_str = datetime.fromtimestamp(end, tz=UTC).strftime('%Y-%m-%d %H:%M:%S')
 
     print(f'Start time: {start_str}')
     print(f'End time: {end_str}')
@@ -299,7 +273,7 @@ if __name__ == '__main__':
 
     if args.generate_report:
         if not args.output:
-            print(f'Must specify report filename with --output.')
+            print('Must specify report filename with --output.')
             sys.exit()
 
         generate_report(args)
@@ -310,7 +284,7 @@ if __name__ == '__main__':
         sys.exit()
 
     if not args.all and not args.condition:
-        print(f'Must specify a specific condition using --condition or use --all to run all conditions.')
+        print('Must specify a specific condition using --condition or use --all to run all conditions.')
         sys.exit()
         
     if args.all and (args.condition or args.dataset):
